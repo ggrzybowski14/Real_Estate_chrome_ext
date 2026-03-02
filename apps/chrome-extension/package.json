@@ -1,0 +1,15 @@
+{
+  "name": "@rea/chrome-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@rea/shared": "file:../../packages/shared"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3"
+  }
+}

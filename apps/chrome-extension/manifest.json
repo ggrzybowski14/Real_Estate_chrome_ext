@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Realtor ROI Analyzer",
+  "version": "0.1.0",
+  "description": "Capture realtor.ca listings and analyze ROI in your web app.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://realtor.ca/*",
+    "*://*.realtor.ca/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Analyze current listing",
+    "default_popup": "src/popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://realtor.ca/*",
+        "*://*.realtor.ca/*"
+      ],
+      "js": [
+        "src/content/content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
