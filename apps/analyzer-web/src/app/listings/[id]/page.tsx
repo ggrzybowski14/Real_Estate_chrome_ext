@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { ListingAssumptions } from "@rea/shared";
 import { formatCurrency, formatPct } from "@/lib/format";
+import { getListingDisplayData } from "@/lib/listing-display";
 import type { StoredListing } from "@/lib/types";
 
 type AssumptionField = keyof ListingAssumptions;
@@ -31,6 +32,7 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
   const latest = stored?.latestAnalysis;
   const scoreClass = latest ? `score-${latest.score}` : "";
   const previousRun = stored?.history?.[1];
+  const display = stored ? getListingDisplayData(stored.listing) : null;
 
   const canRun = Boolean(stored && assumptions);
   const assumptionEntries = useMemo(
@@ -90,6 +92,77 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
         </a>
       </p>
       {error ? <div className="card">{error}</div> : null}
+
+      <div className="card">
+        <h3>Listing details</h3>
+        {display?.photoUrls?.length ? (
+          <div>
+            <p>
+              <img
+                src={display.photoUrls[0]}
+                alt="Main listing photo"
+                style={{
+                  width: "100%",
+                  maxWidth: 760,
+                  maxHeight: 440,
+                  objectFit: "cover",
+                  borderRadius: 8
+                }}
+              />
+            </p>
+            {display.photoUrls.length > 1 ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+                {display.photoUrls.slice(1, 9).map((photoUrl) => (
+                  <img
+                    key={photoUrl}
+                    src={photoUrl}
+                    alt="Listing gallery"
+                    style={{ width: "100%", height: 96, objectFit: "cover", borderRadius: 6 }}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p>
+            No listing photos were captured for this property yet. Older listings ingested before
+            photo capture was added will not have images until you re-open that listing on
+            realtor.ca and run the extension again.
+          </p>
+        )}
+
+        <div className="grid">
+          <div>
+            <div className="label">Price</div>
+            <div className="value">
+              {stored.listing.price ? formatCurrency(stored.listing.price) : "Unknown"}
+            </div>
+          </div>
+          <div>
+            <div className="label">Location</div>
+            <div className="value">
+              {[display?.street, display?.city, display?.province, display?.postalCode]
+                .filter(Boolean)
+                .join(", ") || stored.listing.address || "Unknown"}
+            </div>
+          </div>
+          <div>
+            <div className="label">Property type</div>
+            <div className="value">{display?.propertyType ?? stored.listing.propertyType ?? "-"}</div>
+          </div>
+          <div>
+            <div className="label">Beds / Baths</div>
+            <div className="value">
+              {stored.listing.beds ?? "-"} / {stored.listing.baths ?? "-"}
+            </div>
+          </div>
+          <div>
+            <div className="label">Square feet</div>
+            <div className="value">{stored.listing.sqft ?? "-"}</div>
+          </div>
+        </div>
+        <p>{display?.description ?? stored.listing.description ?? ""}</p>
+      </div>
 
       <div className="card">
         <div className="grid">

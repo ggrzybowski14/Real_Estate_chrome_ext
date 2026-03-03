@@ -7,6 +7,7 @@ test("parses listing with primary fields", () => {
     url: "https://www.realtor.ca/real-estate/12345678/test",
     h1Text: "12 Sample Ave, Toronto, ON",
     bodyText: "Price $799,000 3 beds 2 baths 1,200 sqft",
+    photoUrls: ["https://cdn.realtor.ca/photo-1.jpg"],
     data: {
       price: "$799,000",
       beds: "3",
@@ -20,6 +21,7 @@ test("parses listing with primary fields", () => {
   assert.equal(payload.beds, 3);
   assert.equal(payload.baths, 2);
   assert.equal(payload.address, "12 Sample Ave, Toronto, ON");
+  assert.equal(payload.photoUrls?.[0], "https://cdn.realtor.ca/photo-1.jpg");
 });
 
 test("falls back to jsonLd/meta data when selectors drift", () => {
@@ -28,9 +30,17 @@ test("falls back to jsonLd/meta data when selectors drift", () => {
     meta: {
       "og:title": "99 Backup Street",
       "product:price:amount": "620000",
+      "og:image": "https://cdn.realtor.ca/fallback.jpg",
       description: "Detached home"
     },
-    jsonLdObjects: [{ name: "99 Backup Street", description: "Great lot", "@type": "House" }],
+    jsonLdObjects: [
+      {
+        name: "99 Backup Street",
+        description: "Great lot",
+        "@type": "House",
+        image: ["https://cdn.realtor.ca/photo-a.jpg", "https://cdn.realtor.ca/photo-b.jpg"]
+      }
+    ],
     bodyText: "2 beds 1 baths"
   });
 
@@ -38,4 +48,17 @@ test("falls back to jsonLd/meta data when selectors drift", () => {
   assert.equal(payload.price, 620000);
   assert.equal(payload.propertyType, "House");
   assert.equal(payload.description, "Great lot");
+  assert.ok((payload.photoUrls?.length ?? 0) >= 2);
+});
+
+test("uses for-sale meta price before noisy body amounts", () => {
+  const payload = parseListingPayload({
+    url: "https://www.realtor.ca/real-estate/77777777/test",
+    meta: {
+      description: "Single Family house for sale $1,899,999. Price History available."
+    },
+    bodyText: "Mortgage calculator total: $2,192,026 over term"
+  });
+
+  assert.equal(payload.price, 1899999);
 });

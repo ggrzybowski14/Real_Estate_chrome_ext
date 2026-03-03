@@ -6,6 +6,29 @@ function extractNumber(value) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function extractCurrencyCandidates(text) {
+  if (!text) {
+    return [];
+  }
+  const matches = text.match(/\$[\d,]+/gu) ?? [];
+  const values = matches
+    .map((match) => extractNumber(match))
+    .filter((value) => typeof value === "number");
+  return values.filter((value) => value >= 50000 && value <= 25000000);
+}
+
+function parsePriceFromDescription(text) {
+  if (!text) {
+    return undefined;
+  }
+  const saleMatch = text.match(/for sale[^$]*\$([\d,]+)/iu);
+  if (saleMatch?.[1]) {
+    return extractNumber(saleMatch[1]);
+  }
+  const candidates = extractCurrencyCandidates(text);
+  return candidates[0];
+}
+
 function fromJsonLd(jsonLdObjects, key) {
   if (!jsonLdObjects) {
     return undefined;
@@ -52,10 +75,13 @@ function parseListingPayload(source) {
     source.data?.description ||
     fromJsonLd(source.jsonLdObjects, "description") ||
     source.meta?.description;
+  const descriptionPrice = parsePriceFromDescription(source.meta?.description);
+  const bodyPrices = extractCurrencyCandidates(source.bodyText);
   const price =
     extractNumber(source.data?.price) ||
+    descriptionPrice ||
     extractNumber(source.meta?.["product:price:amount"]) ||
-    extractNumber(source.bodyText?.match(/\$[\d,]+/u)?.[0]);
+    bodyPrices[0];
   const beds =
     extractNumber(source.data?.beds) || extractNumber(source.bodyText?.match(/(\d+)\s*beds?/iu)?.[1]);
   const baths =
@@ -115,6 +141,16 @@ function collectJsonLd() {
     .filter(Boolean);
 }
 
+function collectPhotoUrls() {
+  const images = Array.from(document.querySelectorAll("img"));
+  const urls = images
+    .map((img) => img.currentSrc || img.src)
+    .filter((src) => Boolean(src) && /^https?:\/\//u.test(src))
+    .filter((src) => /\.(jpg|jpeg|png|webp)(\?|$)/iu.test(src) || src.includes("realtor"))
+    .slice(0, 25);
+  return Array.from(new Set(urls));
+}
+
 function buildScrapeSource() {
   const h1 = document.querySelector("h1")?.textContent?.trim();
   const bodyText = document.body?.innerText ?? "";
@@ -131,10 +167,12 @@ function buildScrapeSource() {
     titleText: document.title,
     h1Text: h1,
     bodyText,
+    photoUrls: collectPhotoUrls(),
     jsonLdObjects: collectJsonLd(),
     meta: {
       "og:title": readMetaContent("og:title") ?? "",
       "product:price:amount": readMetaContent("product:price:amount") ?? "",
+      "og:image": readMetaContent("og:image") ?? "",
       description: readMetaContent("description") ?? ""
     },
     data

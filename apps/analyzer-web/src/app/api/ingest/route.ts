@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { defaultAssumptionsFor, runRoiAnalysis } from "@rea/analysis";
-import { mapAnalysisToInsert, mapListingRowToRecord, mapRecordToListingInsert } from "@/lib/db-mappers";
+import {
+  mapAnalysisRowToResult,
+  mapAnalysisToInsert,
+  mapListingRowToRecord,
+  mapRecordToListingInsert
+} from "@/lib/db-mappers";
 import { parseIncomingListing } from "@/lib/ingest";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -129,6 +134,10 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     listingId: listingRecord.id,
-    score: insertedRun.score
+    score: insertedRun.score,
+    listing: listingRecord,
+    latestAnalysis: mapAnalysisRowToResult(
+      insertedRun as Parameters<typeof mapAnalysisRowToResult>[0]
+    )
   });
 }
