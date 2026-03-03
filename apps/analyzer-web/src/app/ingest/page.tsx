@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ingestAndAnalyze, parseIncomingListing } from "@/lib/ingest";
 
 export default function IngestPage() {
   const [message, setMessage] = useState("Waiting for listing payload...");
@@ -16,17 +15,32 @@ export default function IngestPage() {
       return;
     }
 
-    const listing = parseIncomingListing(decodeURIComponent(payload));
-    if (!listing) {
+    const decoded = decodeURIComponent(payload);
+    let parsedPayload: unknown = null;
+    try {
+      parsedPayload = JSON.parse(decoded);
+    } catch {
       setMessage("Payload was invalid and could not be parsed.");
       return;
     }
 
-    const stored = ingestAndAnalyze(listing);
-    setTargetListingId(stored.listing.id);
-    setMessage(
-      `Saved listing and auto-ran ROI. Score: ${stored.latestAnalysis.score.toUpperCase()}`
-    );
+    void fetch("/api/ingest", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(parsedPayload)
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data?.listingId) {
+          setMessage(data?.error ?? "Could not ingest listing.");
+          return;
+        }
+        setTargetListingId(data.listingId as string);
+        setMessage(`Saved listing and auto-ran ROI. Score: ${String(data.score).toUpperCase()}`);
+      })
+      .catch(() => setMessage("Could not ingest listing."));
   }, []);
 
   return (

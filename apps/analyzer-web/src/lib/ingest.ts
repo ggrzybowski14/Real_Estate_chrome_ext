@@ -1,7 +1,4 @@
-import { defaultAssumptionsFor, runRoiAnalysis } from "@rea/analysis";
 import type { ListingRecord } from "@rea/shared";
-import { listingRepository } from "./repository";
-import type { StoredListing } from "./types";
 
 function safeJsonParse(payload: string): unknown {
   try {
@@ -63,15 +60,3 @@ export function parseIncomingListing(payloadParam: string): ListingRecord | null
   return listing;
 }
 
-export function ingestAndAnalyze(listing: ListingRecord): StoredListing {
-  const assumptions = defaultAssumptionsFor(listing);
-  const latestAnalysis = runRoiAnalysis(listing, assumptions);
-  const stored: StoredListing = {
-    listing,
-    assumptions,
-    latestAnalysis,
-    history: [latestAnalysis]
-  };
-  listingRepository.upsert(stored);
-  return stored;
-}

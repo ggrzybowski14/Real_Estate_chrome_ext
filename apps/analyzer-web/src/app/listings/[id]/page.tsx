@@ -2,10 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { runRoiAnalysis } from "@rea/analysis";
 import type { ListingAssumptions } from "@rea/shared";
 import { formatCurrency, formatPct } from "@/lib/format";
-import { listingRepository } from "@/lib/repository";
 import type { StoredListing } from "@/lib/types";
 
 type AssumptionField = keyof ListingAssumptions;
@@ -13,11 +11,21 @@ type AssumptionField = keyof ListingAssumptions;
 export default function ListingDetailPage({ params }: { params: { id: string } }) {
   const [stored, setStored] = useState<StoredListing | null>(null);
   const [assumptions, setAssumptions] = useState<ListingAssumptions | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const current = listingRepository.get(params.id) ?? null;
-    setStored(current);
-    setAssumptions(current?.assumptions ?? null);
+    void fetch(`/api/listings/${params.id}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.error) {
+          setError(data.error);
+          return;
+        }
+        const current = data as StoredListing;
+        setStored(current);
+        setAssumptions(current.assumptions);
+      })
+      .catch(() => setError("Could not load listing"));
   }, [params.id]);
 
   const latest = stored?.latestAnalysis;
@@ -41,21 +49,31 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
     if (!stored || !assumptions) {
       return;
     }
-    const result = runRoiAnalysis(stored.listing, assumptions);
-    const next: StoredListing = {
-      ...stored,
-      assumptions,
-      latestAnalysis: result,
-      history: [result, ...stored.history]
-    };
-    listingRepository.upsert(next);
-    setStored(next);
+    void fetch(`/api/listings/${stored.listing.id}/rerun`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ assumptions })
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.error) {
+          setError(data.error);
+          return;
+        }
+        const next = data as StoredListing;
+        setStored(next);
+        setAssumptions(next.assumptions);
+      })
+      .catch(() => setError("Could not rerun analysis"));
   }
 
   if (!stored || !assumptions || !latest) {
     return (
       <main>
-        <h1>Listing not found</h1>
+        <h1>{error ? "Could not load listing" : "Listing not found"}</h1>
+        {error ? <p>{error}</p> : null}
         <p>
           <Link href="/">Back to listings</Link>
         </p>
@@ -71,6 +89,7 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
           Open source listing
         </a>
       </p>
+      {error ? <div className="card">{error}</div> : null}
 
       <div className="card">
         <div className="grid">

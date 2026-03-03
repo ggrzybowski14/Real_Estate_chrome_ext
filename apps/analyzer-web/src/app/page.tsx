@@ -2,15 +2,24 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { listingRepository } from "@/lib/repository";
 import type { StoredListing } from "@/lib/types";
 import { formatCurrency, formatPct } from "@/lib/format";
 
 export default function HomePage() {
   const [items, setItems] = useState<StoredListing[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setItems(listingRepository.list());
+    void fetch("/api/listings")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setItems(data as StoredListing[]);
+        } else {
+          setError(data?.error ?? "Could not load listings");
+        }
+      })
+      .catch(() => setError("Could not load listings"));
   }, []);
 
   return (
@@ -20,6 +29,7 @@ export default function HomePage() {
       <div className="card">
         <Link href="/ingest">Open ingest page</Link>
       </div>
+      {error ? <div className="card">{error}</div> : null}
       {items.length === 0 ? (
         <div className="card">No listings yet. Use the Chrome extension on realtor.ca.</div>
       ) : (
