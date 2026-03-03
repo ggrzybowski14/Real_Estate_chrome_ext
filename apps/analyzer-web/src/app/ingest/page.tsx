@@ -1,13 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function IngestPage() {
   const [message, setMessage] = useState("Waiting for listing payload...");
   const [targetListingId, setTargetListingId] = useState<string | null>(null);
+  const hasIngestedRef = useRef(false);
 
   useEffect(() => {
+    if (hasIngestedRef.current) {
+      return;
+    }
+
     const params = new URLSearchParams(window.location.search);
     const payload = params.get("payload");
     if (!payload) {
@@ -24,6 +29,7 @@ export default function IngestPage() {
       return;
     }
 
+    hasIngestedRef.current = true;
     void fetch("/api/ingest", {
       method: "POST",
       headers: {

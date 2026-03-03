@@ -9,17 +9,29 @@ export default function HomePage() {
   const [items, setItems] = useState<StoredListing[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void fetch("/api/listings")
+  function loadListings(): void {
+    void fetch(`/api/listings?ts=${Date.now()}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) {
           setItems(data as StoredListing[]);
+          setError(null);
         } else {
           setError(data?.error ?? "Could not load listings");
         }
       })
       .catch(() => setError("Could not load listings"));
+  }
+
+  useEffect(() => {
+    loadListings();
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      loadListings();
+    }, 5000);
+    return () => window.clearInterval(id);
   }, []);
 
   return (
@@ -28,6 +40,8 @@ export default function HomePage() {
       <p>Captured listings and latest ROI score.</p>
       <div className="card">
         <Link href="/ingest">Open ingest page</Link>
+        {" | "}
+        <button onClick={loadListings}>Refresh listings</button>
       </div>
       {error ? <div className="card">{error}</div> : null}
       {items.length === 0 ? (

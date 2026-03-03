@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
+import { defaultAssumptionsFor, runRoiAnalysis } from "@rea/analysis";
 import { buildStoredListing, mapAnalysisRowToResult, mapListingRowToRecord } from "@/lib/db-mappers";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(
   _request: Request,
@@ -31,13 +35,15 @@ export async function GET(
     );
   }
 
-  const stored = buildStoredListing(
-    mapListingRowToRecord(listing),
-    runs.map((row) => mapAnalysisRowToResult(row))
-  );
+  const listingRecord = mapListingRowToRecord(listing);
+  const history = runs.map((row) => mapAnalysisRowToResult(row));
+  if (history.length === 0) {
+    history.push(runRoiAnalysis(listingRecord, defaultAssumptionsFor(listingRecord)));
+  }
+  const stored = buildStoredListing(listingRecord, history);
 
   if (!stored) {
-    return NextResponse.json({ error: "Listing has no analysis runs yet" }, { status: 404 });
+    return NextResponse.json({ error: "Listing could not be loaded" }, { status: 404 });
   }
 
   return NextResponse.json(stored);

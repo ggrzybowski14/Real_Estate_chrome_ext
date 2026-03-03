@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
+import { defaultAssumptionsFor, runRoiAnalysis } from "@rea/analysis";
 import { buildStoredListing, mapAnalysisRowToResult, mapListingRowToRecord } from "@/lib/db-mappers";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function dedupeKey(row: Record<string, unknown>): string {
   const source = String(row.source ?? "realtor.ca");
@@ -67,6 +71,10 @@ export async function GET() {
     .map((row) => {
       const listing = mapListingRowToRecord(row);
       const history = runsByListingId.get(row.id) ?? [];
+      if (history.length === 0) {
+        const assumptions = defaultAssumptionsFor(listing);
+        history.push(runRoiAnalysis(listing, assumptions));
+      }
       return buildStoredListing(listing, history);
     })
     .filter(Boolean);
