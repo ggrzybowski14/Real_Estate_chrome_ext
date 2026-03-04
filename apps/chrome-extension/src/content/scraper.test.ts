@@ -62,3 +62,37 @@ test("uses for-sale meta price before noisy body amounts", () => {
 
   assert.equal(payload.price, 1899999);
 });
+
+test("prefers jsonLd offers price when available", () => {
+  const payload = parseListingPayload({
+    url: "https://www.realtor.ca/real-estate/88888888/test",
+    jsonLdObjects: [
+      {
+        "@context": "https://schema.org",
+        "@type": "Offer",
+        price: "1495000"
+      }
+    ],
+    bodyText: "Total mortgage over term: $2,300,000"
+  });
+
+  assert.equal(payload.price, 1495000);
+});
+
+test("does not infer price from noisy body-only values", () => {
+  const payload = parseListingPayload({
+    url: "https://www.realtor.ca/real-estate/11111111/test",
+    bodyText: "Mortgage calculator total: $2,300,000 and payment $9,999 per month"
+  });
+
+  assert.equal(payload.price, undefined);
+});
+
+test("extracts building type from body summary label", () => {
+  const payload = parseListingPayload({
+    url: "https://www.realtor.ca/real-estate/22222222/test",
+    bodyText: "Property Summary\nBuilding Type\nDuplex\nProperty Type\nSingle Family"
+  });
+
+  assert.equal(payload.propertyType, "Duplex");
+});

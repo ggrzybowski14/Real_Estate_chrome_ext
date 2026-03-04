@@ -1,5 +1,7 @@
 import { parseListingPayload, type ScrapeSource } from "./scraper";
 
+declare const chrome: any;
+
 function readMetaContent(property: string): string | undefined {
   const el = document.querySelector(`meta[property="${property}"], meta[name="${property}"]`);
   return el?.getAttribute("content") ?? undefined;
@@ -41,6 +43,60 @@ function parsePriceFromDescription(text?: string): number | undefined {
   return extractCurrencyCandidates(text)[0];
 }
 
+function extractOfferPriceFromObject(obj: Record<string, unknown>): number | undefined {
+  const directPrice = Number(
+    typeof obj.price === "string" ? obj.price.replace(/[^0-9.-]+/g, "") : String(obj.price ?? "")
+  );
+  if (Number.isFinite(directPrice) && directPrice > 0) {
+    return directPrice;
+  }
+
+  const offers = obj.offers;
+  if (offers && typeof offers === "object") {
+    if (Array.isArray(offers)) {
+      for (const offer of offers) {
+        if (offer && typeof offer === "object") {
+          const price = extractOfferPriceFromObject(offer as Record<string, unknown>);
+          if (price) {
+            return price;
+          }
+        }
+      }
+    } else {
+      const price = extractOfferPriceFromObject(offers as Record<string, unknown>);
+      if (price) {
+        return price;
+      }
+    }
+  }
+
+  const graph = obj["@graph"];
+  if (Array.isArray(graph)) {
+    for (const node of graph) {
+      if (node && typeof node === "object") {
+        const price = extractOfferPriceFromObject(node as Record<string, unknown>);
+        if (price) {
+          return price;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function fromJsonLdOfferPrice(jsonLdObjects: unknown[]): number | undefined {
+  for (const obj of jsonLdObjects) {
+    if (obj && typeof obj === "object") {
+      const price = extractOfferPriceFromObject(obj as Record<string, unknown>);
+      if (price) {
+        return price;
+      }
+    }
+  }
+  return undefined;
+}
+
 function collectPhotoUrls(): string[] {
   const images = Array.from(document.querySelectorAll("img"));
   const urls = images
@@ -51,14 +107,43 @@ function collectPhotoUrls(): string[] {
   return Array.from(new Set(urls));
 }
 
+function collectLikelyListingPriceText(): string | undefined {
+  const selectors = [
+    '[data-testid*="Price"]',
+    '[data-test*="price"]',
+    'span[class*="listingPrice"]',
+    'div[class*="listingPrice"]',
+    '[class*="PropertyPrice"]',
+    '[class*="Price"]'
+  ];
+  const nodes = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
+  for (const node of nodes) {
+    const text = node.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    if (!text.includes("$")) {
+      continue;
+    }
+    if (
+      /mortgage|payment|month|calculator|estimate|tax|assessment|history|down payment|cash flow|rent/iu.test(
+        text
+      )
+    ) {
+      continue;
+    }
+    if (extractCurrencyCandidates(text).length > 0) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
 function buildScrapeSource(): ScrapeSource {
   const h1 = document.querySelector("h1")?.textContent?.trim();
   const bodyText = document.body?.innerText ?? "";
 
   const data: Record<string, string> = {};
-  const priceNode = document.querySelector('[class*="Price"], [data-test*="price"]');
-  if (priceNode?.textContent) {
-    data.price = priceNode.textContent.trim();
+  const likelyPriceText = collectLikelyListingPriceText();
+  if (likelyPriceText) {
+    data.price = likelyPriceText;
   }
   if (h1) {
     data.address = h1;

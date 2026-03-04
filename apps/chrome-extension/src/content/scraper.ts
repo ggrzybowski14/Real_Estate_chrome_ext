@@ -17,6 +17,8 @@ interface LocationSnapshot {
   country?: string;
 }
 
+const GENERIC_TYPES = new Set(["product", "offer", "thing", "residence"]);
+
 export interface ScrapedListingPayload {
   source: "realtor.ca";
   sourceListingId?: string;
@@ -36,6 +38,70 @@ export interface ScrapedListingPayload {
   scrapeConfidence: number;
   missingFields: string[];
   rawSnapshot: Record<string, unknown>;
+}
+
+function normalizeBuildingType(input?: string): string | undefined {
+  if (!input) {
+    return undefined;
+  }
+  const value = input.replace(/\s+/g, " ").trim();
+  if (!value) {
+    return undefined;
+  }
+
+  const lower = value.toLowerCase();
+  if (GENERIC_TYPES.has(lower)) {
+    return undefined;
+  }
+  if (/(duplex)/iu.test(value)) {
+    return "Duplex";
+  }
+  if (/(triplex|fourplex|plex)/iu.test(value)) {
+    return "Multiplex";
+  }
+  if (/(apartment|condo|condominium|loft|penthouse)/iu.test(value)) {
+    return "Apartment";
+  }
+  if (/(townhouse|townhome|row house|row\/townhouse|rowhouse)/iu.test(value)) {
+    return "Townhouse";
+  }
+  if (/(single family|house|detached|semi-detached)/iu.test(value)) {
+    return "House";
+  }
+  return value
+    .split(" ")
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function inferBuildingTypeFromDescription(description?: string): string | undefined {
+  if (!description) {
+    return undefined;
+  }
+  const compact = description.replace(/\s+/g, " ").trim();
+  const beforeBeds = compact.match(/^(.*?)\b\d+\s+bedrooms?\b/iu)?.[1];
+  return normalizeBuildingType(beforeBeds ?? compact);
+}
+
+function inferBuildingTypeFromBody(bodyText?: string): string | undefined {
+  if (!bodyText) {
+    return undefined;
+  }
+  const matchers = [
+    /Building Type\s*[:\n]\s*([^\n\r]{2,50})/iu,
+    /Property Type\s*[:\n]\s*([^\n\r]{2,50})/iu
+  ];
+  for (const matcher of matchers) {
+    const match = bodyText.match(matcher);
+    if (!match?.[1]) {
+      continue;
+    }
+    const normalized = normalizeBuildingType(match[1]);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return undefined;
 }
 
 function extractNumber(value?: string): number | undefined {
@@ -66,6 +132,61 @@ function parsePriceFromDescription(text?: string): number | undefined {
     return extractNumber(saleMatch[1]);
   }
   return extractCurrencyCandidates(text)[0];
+}
+
+function extractOfferPriceFromObject(obj: Record<string, unknown>): number | undefined {
+  const directPrice = extractNumber(typeof obj.price === "string" ? obj.price : String(obj.price ?? ""));
+  if (directPrice) {
+    return directPrice;
+  }
+
+  const offers = obj.offers;
+  if (offers && typeof offers === "object") {
+    if (Array.isArray(offers)) {
+      for (const offer of offers) {
+        if (offer && typeof offer === "object") {
+          const price = extractOfferPriceFromObject(offer as Record<string, unknown>);
+          if (price) {
+            return price;
+          }
+        }
+      }
+    } else {
+      const price = extractOfferPriceFromObject(offers as Record<string, unknown>);
+      if (price) {
+        return price;
+      }
+    }
+  }
+
+  const graph = obj["@graph"];
+  if (Array.isArray(graph)) {
+    for (const node of graph) {
+      if (node && typeof node === "object") {
+        const price = extractOfferPriceFromObject(node as Record<string, unknown>);
+        if (price) {
+          return price;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function fromJsonLdOfferPrice(jsonLdObjects: unknown[] | undefined): number | undefined {
+  if (!jsonLdObjects) {
+    return undefined;
+  }
+  for (const obj of jsonLdObjects) {
+    if (obj && typeof obj === "object") {
+      const price = extractOfferPriceFromObject(obj as Record<string, unknown>);
+      if (price) {
+        return price;
+      }
+    }
+  }
+  return undefined;
 }
 
 function fromJsonLd(jsonLdObjects: unknown[] | undefined, key: string): string | undefined {
@@ -171,13 +292,13 @@ export function parseListingPayload(source: ScrapeSource): ScrapedListingPayload
     source.data?.description ||
     fromJsonLd(source.jsonLdObjects, "description") ||
     source.meta?.description;
+  const jsonLdOfferPrice = fromJsonLdOfferPrice(source.jsonLdObjects);
   const descriptionPrice = parsePriceFromDescription(source.meta?.description);
-  const bodyPrices = extractCurrencyCandidates(source.bodyText);
   const price =
+    jsonLdOfferPrice ||
     extractNumber(source.data?.price) ||
     descriptionPrice ||
-    extractNumber(source.meta?.["product:price:amount"]) ||
-    bodyPrices[0];
+    extractNumber(source.meta?.["product:price:amount"]);
   const beds =
     extractNumber(source.data?.beds) || extractNumber(source.bodyText?.match(/(\d+)\s*beds?/iu)?.[1]);
   const baths =
@@ -186,7 +307,12 @@ export function parseListingPayload(source: ScrapeSource): ScrapedListingPayload
   const sqft =
     extractNumber(source.data?.sqft) ||
     extractNumber(source.bodyText?.match(/([\d,]+)\s*(?:sq\s*ft|sqft)/iu)?.[1]);
-  const propertyType = source.data?.propertyType || fromJsonLd(source.jsonLdObjects, "@type");
+  const propertyType = normalizeBuildingType(
+    source.data?.propertyType ||
+      inferBuildingTypeFromBody(source.bodyText) ||
+      fromJsonLd(source.jsonLdObjects, "@type") ||
+      inferBuildingTypeFromDescription(source.meta?.description)
+  );
   const taxesAnnual = extractNumber(source.data?.taxesAnnual);
   const condoFeesMonthly = extractNumber(source.data?.condoFeesMonthly);
   const photoUrls = Array.from(

@@ -9,13 +9,31 @@ async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
   return tabs[0];
 }
 
+async function requestScrape(tabId: number) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { type: "REA_SCRAPE_LISTING" });
+    if (response?.ok && response.payload) {
+      return response;
+    }
+  } catch {
+    // Ignore and try script injection fallback.
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["src/content/content-script.js"]
+  });
+
+  return chrome.tabs.sendMessage(tabId, { type: "REA_SCRAPE_LISTING" });
+}
+
 async function analyzeActiveTab(): Promise<void> {
   const tab = await getActiveTab();
   if (!tab?.id || !isRealtorListing(tab.url)) {
     return;
   }
 
-  const response = await chrome.tabs.sendMessage(tab.id, { type: "REA_SCRAPE_LISTING" });
+  const response = await requestScrape(tab.id);
   if (!response?.ok || !response.payload) {
     return;
   }

@@ -147,7 +147,7 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             </div>
           </div>
           <div>
-            <div className="label">Property type</div>
+            <div className="label">Building type</div>
             <div className="value">{display?.propertyType ?? stored.listing.propertyType ?? "-"}</div>
           </div>
           <div>
