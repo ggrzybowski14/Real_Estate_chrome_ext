@@ -10,6 +10,6 @@
     "dev:web": "npm run dev --workspace=@rea/analyzer-web",
     "dev:web:clean": "rm -rf \"apps/analyzer-web/.next\" && npm run dev:web",
     "build:web": "npm run build --workspace=@rea/analyzer-web",
-    "test": "npm run test --workspace=@rea/analysis && npm run test --workspace=@rea/chrome-extension"
+    "test": "npm run test --workspace=@rea/analysis && npm run test --workspace=@rea/chrome-extension && npm run test --workspace=@rea/analyzer-web"
   }
 }

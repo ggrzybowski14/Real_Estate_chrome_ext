@@ -1,4 +1,10 @@
-import type { ListingAnalysisResult, ListingAssumptions, ListingRecord } from "@rea/shared";
+import type {
+  BenchmarkContext,
+  ListingAnalysisResult,
+  ListingAssumptions,
+  ListingRecord,
+  AssumptionSources
+} from "@rea/shared";
 import type { StoredListing } from "./types";
 
 type ListingRow = {
@@ -35,9 +41,25 @@ type AnalysisRunRow = {
   annual_cash_on_cash_roi_pct: number;
   break_even_occupancy_pct: number;
   thresholds_version: string;
-  assumptions: ListingAssumptions;
+  assumptions: ListingAssumptions & {
+    __assumption_sources?: AssumptionSources;
+    __benchmark_context?: BenchmarkContext;
+  };
   run_at: string;
 };
+
+function decodeAssumptionsPayload(payload: AnalysisRunRow["assumptions"]): {
+  assumptions: ListingAssumptions;
+  assumptionSources?: AssumptionSources;
+  benchmarkContext?: BenchmarkContext;
+} {
+  const { __assumption_sources, __benchmark_context, ...rest } = payload ?? {};
+  return {
+    assumptions: rest as ListingAssumptions,
+    assumptionSources: __assumption_sources,
+    benchmarkContext: __benchmark_context
+  };
+}
 
 export function mapListingRowToRecord(row: ListingRow): ListingRecord {
   return {
@@ -64,6 +86,7 @@ export function mapListingRowToRecord(row: ListingRow): ListingRecord {
 }
 
 export function mapAnalysisRowToResult(row: AnalysisRunRow): ListingAnalysisResult {
+  const decoded = decodeAssumptionsPayload(row.assumptions);
   return {
     listingId: row.listing_id,
     score: row.score,
@@ -75,7 +98,9 @@ export function mapAnalysisRowToResult(row: AnalysisRunRow): ListingAnalysisResu
     annualCashOnCashRoiPct: row.annual_cash_on_cash_roi_pct,
     breakEvenOccupancyPct: row.break_even_occupancy_pct,
     thresholdsVersion: row.thresholds_version,
-    assumptions: row.assumptions,
+    assumptions: decoded.assumptions,
+    assumptionSources: decoded.assumptionSources,
+    benchmarkContext: decoded.benchmarkContext,
     runAt: row.run_at
   };
 }
@@ -104,6 +129,11 @@ export function mapRecordToListingInsert(record: ListingRecord) {
 }
 
 export function mapAnalysisToInsert(result: ListingAnalysisResult) {
+  const assumptionsPayload: AnalysisRunRow["assumptions"] = {
+    ...(result.assumptions as ListingAssumptions),
+    __assumption_sources: result.assumptionSources,
+    __benchmark_context: result.benchmarkContext
+  };
   return {
     listing_id: result.listingId,
     score: result.score,
@@ -115,7 +145,7 @@ export function mapAnalysisToInsert(result: ListingAnalysisResult) {
     annual_cash_on_cash_roi_pct: result.annualCashOnCashRoiPct,
     break_even_occupancy_pct: result.breakEvenOccupancyPct,
     thresholds_version: result.thresholdsVersion,
-    assumptions: result.assumptions,
+    assumptions: assumptionsPayload,
     run_at: result.runAt
   };
 }

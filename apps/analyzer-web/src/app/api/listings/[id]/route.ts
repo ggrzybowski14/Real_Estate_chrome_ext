@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { defaultAssumptionsFor, runRoiAnalysis } from "@rea/analysis";
 import { buildStoredListing, mapAnalysisRowToResult, mapListingRowToRecord } from "@/lib/db-mappers";
+import { resolveBenchmarkAssumptions } from "@/lib/benchmark-resolver";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +39,16 @@ export async function GET(
   const listingRecord = mapListingRowToRecord(listing);
   const history = runs.map((row) => mapAnalysisRowToResult(row));
   if (history.length === 0) {
-    history.push(runRoiAnalysis(listingRecord, defaultAssumptionsFor(listingRecord)));
+    const analysis = runRoiAnalysis(listingRecord, defaultAssumptionsFor(listingRecord));
+    try {
+      const benchmark = await resolveBenchmarkAssumptions(listingRecord);
+      const benchmarkAnalysis = runRoiAnalysis(listingRecord, benchmark.assumptions);
+      benchmarkAnalysis.assumptionSources = benchmark.assumptionSources;
+      benchmarkAnalysis.benchmarkContext = benchmark.benchmarkContext;
+      history.push(benchmarkAnalysis);
+    } catch {
+      history.push(analysis);
+    }
   }
   const stored = buildStoredListing(listingRecord, history);
 

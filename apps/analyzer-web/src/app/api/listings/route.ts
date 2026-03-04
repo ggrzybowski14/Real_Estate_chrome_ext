@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { defaultAssumptionsFor, runRoiAnalysis } from "@rea/analysis";
 import { buildStoredListing, mapAnalysisRowToResult, mapListingRowToRecord } from "@/lib/db-mappers";
+import { resolveBenchmarkAssumptions } from "@/lib/benchmark-resolver";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
@@ -67,17 +68,25 @@ export async function GET() {
     runsByListingId.set(row.listing_id, existing);
   }
 
-  const storedListings = listings
-    .map((row) => {
+  const storedListings = await Promise.all(
+    listings.map(async (row) => {
       const listing = mapListingRowToRecord(row);
       const history = runsByListingId.get(row.id) ?? [];
       if (history.length === 0) {
-        const assumptions = defaultAssumptionsFor(listing);
-        history.push(runRoiAnalysis(listing, assumptions));
+        try {
+          const benchmark = await resolveBenchmarkAssumptions(listing);
+          const analysis = runRoiAnalysis(listing, benchmark.assumptions);
+          analysis.assumptionSources = benchmark.assumptionSources;
+          analysis.benchmarkContext = benchmark.benchmarkContext;
+          history.push(analysis);
+        } catch {
+          const assumptions = defaultAssumptionsFor(listing);
+          history.push(runRoiAnalysis(listing, assumptions));
+        }
       }
       return buildStoredListing(listing, history);
     })
-    .filter(Boolean);
+  );
 
-  return NextResponse.json(storedListings);
+  return NextResponse.json(storedListings.filter(Boolean));
 }

@@ -6,6 +6,7 @@ import {
   mapListingRowToRecord,
   mapRecordToListingInsert
 } from "@/lib/db-mappers";
+import { resolveBenchmarkAssumptions } from "@/lib/benchmark-resolver";
 import { parseIncomingListing } from "@/lib/ingest";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -117,8 +118,20 @@ export async function POST(request: Request) {
   const listingRecord = mapListingRowToRecord(
     persistedListing as Parameters<typeof mapListingRowToRecord>[0]
   );
-  const assumptions = defaultAssumptionsFor(listingRecord);
+  let assumptions = defaultAssumptionsFor(listingRecord);
+  let assumptionSources = undefined;
+  let benchmarkContext = undefined;
+  try {
+    const benchmark = await resolveBenchmarkAssumptions(listingRecord);
+    assumptions = benchmark.assumptions;
+    assumptionSources = benchmark.assumptionSources;
+    benchmarkContext = benchmark.benchmarkContext;
+  } catch {
+    assumptions = defaultAssumptionsFor(listingRecord);
+  }
   const analysis = runRoiAnalysis(listingRecord, assumptions);
+  analysis.assumptionSources = assumptionSources;
+  analysis.benchmarkContext = benchmarkContext;
   const { data: insertedRun, error: runError } = await supabase
     .from("analysis_runs")
     .insert(mapAnalysisToInsert(analysis))

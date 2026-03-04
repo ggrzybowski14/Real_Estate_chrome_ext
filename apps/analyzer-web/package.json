@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "benchmarks:refresh": "node ./scripts/refresh-benchmarks.mjs",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@rea/analysis": "file:../../packages/analysis",
@@ -19,6 +21,7 @@
     "@types/node": "^22.13.16",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "tsx": "^4.20.6",
     "typescript": "^5.8.2"
   }
 }

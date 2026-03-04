@@ -54,3 +54,111 @@ main {
 .score-bad {
   color: #ff6b6b;
 }
+
+.underwriting-subtitle {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.underwriting-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.underwriting-table-section {
+  margin-bottom: 10px;
+}
+
+.underwriting-table tbody tr td {
+  padding: 8px 0;
+  border-bottom: 1px solid #262c36;
+  vertical-align: middle;
+}
+
+.underwriting-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.underwriting-table td.label {
+  width: 68%;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  opacity: 0.72;
+}
+
+.underwriting-table td.value {
+  width: 32%;
+  text-align: right;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.source-help-wrap {
+  position: relative;
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.source-help {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+  cursor: help;
+  background: #233247;
+  color: #b9d4ff;
+  border: 1px solid #365075;
+}
+
+.source-help-muted {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+  background: #2a2f3a;
+  color: #7d899c;
+  border: 1px solid #3a4354;
+  margin-left: 6px;
+}
+
+.source-help-popover {
+  position: absolute;
+  right: 0;
+  top: 20px;
+  width: 260px;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.35;
+  background: #0f141d;
+  border: 1px solid #2e3e55;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #d6deeb;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 15;
+}
+
+.source-help-wrap:hover .source-help-popover,
+.source-help-wrap:focus-within .source-help-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}

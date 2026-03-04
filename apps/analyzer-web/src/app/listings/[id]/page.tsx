@@ -2,16 +2,22 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { ListingAssumptions } from "@rea/shared";
+import type {
+  AssumptionField,
+  AssumptionSourceDetail,
+  AssumptionSources,
+  BenchmarkContext,
+  ListingAssumptions
+} from "@rea/shared";
 import { formatCurrency, formatPct } from "@/lib/format";
 import { getListingDisplayData } from "@/lib/listing-display";
 import type { StoredListing } from "@/lib/types";
 
-type AssumptionField = keyof ListingAssumptions;
-
 export default function ListingDetailPage({ params }: { params: { id: string } }) {
   const [stored, setStored] = useState<StoredListing | null>(null);
   const [assumptions, setAssumptions] = useState<ListingAssumptions | null>(null);
+  const [assumptionSources, setAssumptionSources] = useState<AssumptionSources>({});
+  const [benchmarkContext, setBenchmarkContext] = useState<BenchmarkContext | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -25,6 +31,8 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
         const current = data as StoredListing;
         setStored(current);
         setAssumptions(current.assumptions);
+        setAssumptionSources(current.latestAnalysis.assumptionSources ?? {});
+        setBenchmarkContext(current.latestAnalysis.benchmarkContext);
       })
       .catch(() => setError("Could not load listing"));
   }, [params.id]);
@@ -33,6 +41,25 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
   const scoreClass = latest ? `score-${latest.score}` : "";
   const previousRun = stored?.history?.[1];
   const display = stored ? getListingDisplayData(stored.listing) : null;
+  const propertyCost = stored?.listing.price ?? 0;
+  const downPaymentCost = propertyCost * ((assumptions?.downPaymentPct ?? 0) / 100);
+  const closingCosts = propertyCost * ((assumptions?.closingCostsPct ?? 0) / 100);
+  const financedAmount = Math.max(propertyCost - downPaymentCost, 0);
+  const monthlyPropertyTax = (assumptions?.annualPropertyTax ?? 0) / 12;
+  const monthlyMaintenance = (assumptions?.monthlyRent ?? 0) * ((assumptions?.maintenancePct ?? 0) / 100);
+  const monthlyManagement = (assumptions?.monthlyRent ?? 0) * ((assumptions?.managementFeePct ?? 0) / 100);
+  const monthlyStrataFees = stored?.listing.condoFeesMonthly ?? 0;
+  const grossMonthlyUpkeepCost =
+    monthlyMaintenance +
+    monthlyPropertyTax +
+    (assumptions?.monthlyInsurance ?? 0) +
+    (assumptions?.monthlyUtilities ?? 0) +
+    monthlyManagement +
+    monthlyStrataFees;
+  const grossAnnualUpkeepCost = grossMonthlyUpkeepCost * 12;
+  const effectiveMonthlyRent = (assumptions?.monthlyRent ?? 0) * (1 - (assumptions?.vacancyPct ?? 0) / 100);
+  const grossAnnualRentAfterVacancy = effectiveMonthlyRent * 12;
+  const capRatePct = propertyCost > 0 ? (latest ? (latest.annualNOI / propertyCost) * 100 : 0) : 0;
 
   const canRun = Boolean(stored && assumptions);
   const assumptionEntries = useMemo(
@@ -45,6 +72,29 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
       return;
     }
     setAssumptions({ ...assumptions, [key]: value });
+    setAssumptionSources((previous) => {
+      const existing = previous[key];
+      const reference = existing?.reference ?? {
+        publisher: "User input",
+        dataset: "Manual override",
+        metric: key,
+        region: benchmarkContext?.regionLabel ?? "Custom",
+        period: new Date().toISOString().slice(0, 10),
+        url: "",
+        fetchedAt: new Date().toISOString()
+      };
+      return {
+        ...previous,
+        [key]: {
+          field: key,
+          value,
+          method: "manual",
+          confidence: 1,
+          notes: "User edited this value in assumptions.",
+          reference
+        }
+      };
+    });
   }
 
   function rerunAnalysis(): void {
@@ -56,7 +106,7 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ assumptions })
+      body: JSON.stringify({ assumptions, assumptionSources, benchmarkContext })
     })
       .then((res) => res.json())
       .then((data) => {
@@ -67,8 +117,60 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
         const next = data as StoredListing;
         setStored(next);
         setAssumptions(next.assumptions);
+        setAssumptionSources(next.latestAnalysis.assumptionSources ?? {});
+        setBenchmarkContext(next.latestAnalysis.benchmarkContext);
       })
       .catch(() => setError("Could not rerun analysis"));
+  }
+
+  function sourceFor(field: AssumptionField): AssumptionSourceDetail | undefined {
+    return assumptionSources[field];
+  }
+
+  function SourceHelp({ field }: { field: AssumptionField }) {
+    const source = sourceFor(field);
+    if (!source) {
+      return (
+        <span className="source-help source-help-muted" title="No benchmark source available yet">
+          ?
+        </span>
+      );
+    }
+
+    return (
+      <span className="source-help-wrap">
+        <span className="source-help" tabIndex={0} aria-label={`Source for ${field}`}>
+          ?
+        </span>
+        <span className="source-help-popover">
+          <strong>{source.reference.dataset}</strong>
+          <br />
+          {source.reference.publisher}
+          <br />
+          Region: {source.reference.region}
+          <br />
+          Period: {source.reference.period}
+          <br />
+          Method: {source.method}
+          <br />
+          Confidence: {Math.round(source.confidence * 100)}%
+          {source.notes ? (
+            <>
+              <br />
+              Note: {source.notes}
+            </>
+          ) : null}
+          {source.reference.url ? (
+            <>
+              <br />
+              <a href={source.reference.url} target="_blank" rel="noreferrer">
+                Reference link
+              </a>
+            </>
+          ) : null}
+        </span>
+      </span>
+    );
   }
 
   if (!stored || !assumptions || !latest) {
@@ -165,24 +267,27 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
       </div>
 
       <div className="card">
-        <div className="grid">
-          <div>
-            <div className="label">Score</div>
-            <div className={`value ${scoreClass}`}>{latest.score.toUpperCase()}</div>
-          </div>
-          <div>
-            <div className="label">ROI</div>
-            <div className="value">{formatPct(latest.annualCashOnCashRoiPct)}</div>
-          </div>
-          <div>
-            <div className="label">Monthly cash flow</div>
-            <div className="value">{formatCurrency(latest.monthlyCashFlow)}</div>
-          </div>
-          <div>
-            <div className="label">Break-even occupancy</div>
-            <div className="value">{formatPct(latest.breakEvenOccupancyPct)}</div>
-          </div>
-        </div>
+        <h3>Investment indicators</h3>
+        <table className="underwriting-table">
+          <tbody>
+            <tr>
+              <td className="label">Score</td>
+              <td className={`value ${scoreClass}`}>{latest.score.toUpperCase()}</td>
+            </tr>
+            <tr>
+              <td className="label">ROI (cash-on-cash)</td>
+              <td className="value">{formatPct(latest.annualCashOnCashRoiPct)}</td>
+            </tr>
+            <tr>
+              <td className="label">Monthly cash flow</td>
+              <td className="value">{formatCurrency(latest.monthlyCashFlow)}</td>
+            </tr>
+            <tr>
+              <td className="label">Cap rate</td>
+              <td className="value">{formatPct(capRatePct)}</td>
+            </tr>
+          </tbody>
+        </table>
         {previousRun ? (
           <p>
             Since previous run: ROI{" "}
@@ -193,7 +298,120 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
       </div>
 
       <div className="card">
-        <h3>Assumptions</h3>
+        <h3>Underwriting summary</h3>
+        <h4 className="underwriting-subtitle">Buying costs</h4>
+        <table className="underwriting-table underwriting-table-section">
+          <tbody>
+            <tr>
+              <td className="label">Property cost</td>
+              <td className="value">{formatCurrency(propertyCost)}</td>
+            </tr>
+            <tr>
+              <td className="label">Down payment ({assumptions.downPaymentPct}%)</td>
+              <td className="value">
+                {formatCurrency(downPaymentCost)} <SourceHelp field="downPaymentPct" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Estimated closing costs ({assumptions.closingCostsPct}%)</td>
+              <td className="value">{formatCurrency(closingCosts)}</td>
+            </tr>
+            <tr>
+              <td className="label">Financed amount</td>
+              <td className="value">{formatCurrency(financedAmount)}</td>
+            </tr>
+            <tr>
+              <td className="label">Mortgage rate</td>
+              <td className="value">
+                {formatPct(assumptions.mortgageRatePct)} <SourceHelp field="mortgageRatePct" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Amortization</td>
+              <td className="value">
+                {assumptions.amortizationYears} years <SourceHelp field="amortizationYears" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h4 className="underwriting-subtitle">Upkeep costs</h4>
+        <table className="underwriting-table underwriting-table-section">
+          <tbody>
+            <tr>
+              <td className="label">Maintenance</td>
+              <td className="value">
+                {formatCurrency(monthlyMaintenance)} / month <SourceHelp field="maintenancePct" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Property tax</td>
+              <td className="value">
+                {formatCurrency(monthlyPropertyTax)} / month <SourceHelp field="annualPropertyTax" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Insurance</td>
+              <td className="value">
+                {formatCurrency(assumptions.monthlyInsurance)} / month <SourceHelp field="monthlyInsurance" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Utilities</td>
+              <td className="value">
+                {formatCurrency(assumptions.monthlyUtilities)} / month <SourceHelp field="monthlyUtilities" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Management</td>
+              <td className="value">
+                {formatCurrency(monthlyManagement)} / month <SourceHelp field="managementFeePct" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Strata / condo fees</td>
+              <td className="value">{formatCurrency(monthlyStrataFees)} / month</td>
+            </tr>
+            <tr>
+              <td className="label">Gross monthly upkeep cost</td>
+              <td className="value">{formatCurrency(grossMonthlyUpkeepCost)}</td>
+            </tr>
+            <tr>
+              <td className="label">Gross annual upkeep cost</td>
+              <td className="value">{formatCurrency(grossAnnualUpkeepCost)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h4 className="underwriting-subtitle">Estimated income</h4>
+        <table className="underwriting-table underwriting-table-section">
+          <tbody>
+            <tr>
+              <td className="label">Monthly rent</td>
+              <td className="value">
+                {formatCurrency(assumptions.monthlyRent)} <SourceHelp field="monthlyRent" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Vacancy rate</td>
+              <td className="value">
+                {formatPct(assumptions.vacancyPct)} <SourceHelp field="vacancyPct" />
+              </td>
+            </tr>
+            <tr>
+              <td className="label">Monthly rent after vacancy</td>
+              <td className="value">{formatCurrency(effectiveMonthlyRent)}</td>
+            </tr>
+            <tr>
+              <td className="label">Gross annual rent (after vacancy)</td>
+              <td className="value">{formatCurrency(grossAnnualRentAfterVacancy)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <h3>Assumptions and rerun</h3>
         <div className="grid">
           {assumptionEntries.map(([key, value]) => (
             <label key={key}>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { runRoiAnalysis } from "@rea/analysis";
-import type { ListingAssumptions } from "@rea/shared";
+import type { AssumptionSources, BenchmarkContext, ListingAssumptions } from "@rea/shared";
 import {
   buildStoredListing,
   mapAnalysisRowToResult,
@@ -43,12 +43,28 @@ function parseAssumptions(value: unknown): ListingAssumptions | null {
   };
 }
 
+function parseAssumptionSources(value: unknown): AssumptionSources | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as AssumptionSources;
+}
+
+function parseBenchmarkContext(value: unknown): BenchmarkContext | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as BenchmarkContext;
+}
+
 export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   const body = await request.json().catch(() => null);
   const assumptions = parseAssumptions(body?.assumptions);
+  const assumptionSources = parseAssumptionSources(body?.assumptionSources);
+  const benchmarkContext = parseBenchmarkContext(body?.benchmarkContext);
   if (!assumptions) {
     return NextResponse.json({ error: "Invalid assumptions payload" }, { status: 400 });
   }
@@ -66,6 +82,8 @@ export async function POST(
 
   const listingRecord = mapListingRowToRecord(listing);
   const analysis = runRoiAnalysis(listingRecord, assumptions);
+  analysis.assumptionSources = assumptionSources;
+  analysis.benchmarkContext = benchmarkContext;
   const { error: insertError } = await supabase.from("analysis_runs").insert(mapAnalysisToInsert(analysis));
 
   if (insertError) {
