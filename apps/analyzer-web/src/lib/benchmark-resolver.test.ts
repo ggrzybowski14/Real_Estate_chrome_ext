@@ -39,6 +39,38 @@ test("inferRegion maps GTA listing by city", () => {
   assert.equal(region.regionCode, "ca-on-gta");
 });
 
+test("inferRegion maps listing by FSA postal prefix", () => {
+  const region = inferRegion(
+    sampleListing({
+      address: "201 9949 Third St, Sidney, BC V8L 3B1",
+      rawSnapshot: {
+        location: {
+          city: "Sidney",
+          province: "BC",
+          postalCode: "V8L 3B1"
+        }
+      }
+    })
+  );
+  assert.equal(region.regionCode, "ca-bc-victoria");
+});
+
+test("inferRegion can infer province from postal when missing", () => {
+  const region = inferRegion(
+    sampleListing({
+      address: "88 Unknown Ave, Ottawa K1P 1J1",
+      rawSnapshot: {
+        location: {
+          city: "",
+          province: "",
+          postalCode: "K1P 1J1"
+        }
+      }
+    })
+  );
+  assert.equal(region.regionCode, "ca-on-ottawa");
+});
+
 test("property and bucket helpers normalize input", () => {
   assert.equal(normalizePropertyClass("Townhouse"), "townhouse");
   assert.equal(bedroomBucket(5), 4);

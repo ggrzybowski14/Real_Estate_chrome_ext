@@ -51,30 +51,63 @@ type CostBenchmarkRow = {
   source_fetched_at: string;
 };
 
-const REGION_CITY_MAP: Array<{ regionCode: string; regionLabel: string; province: string; cities: string[] }> = [
+type RegionRule = {
+  regionCode: string;
+  regionLabel: string;
+  province: string;
+  cities: string[];
+  fsaPrefixes: string[];
+};
+
+const REGION_RULES: RegionRule[] = [
   {
     regionCode: "ca-on-gta",
     regionLabel: "Greater Toronto Area, ON",
     province: "ON",
-    cities: ["toronto", "mississauga", "brampton", "markham", "vaughan", "richmond hill"]
+    cities: ["toronto", "mississauga", "brampton", "markham", "vaughan", "richmond hill"],
+    fsaPrefixes: ["M1", "M2", "M3", "M4", "M5", "M6", "M9", "L4", "L5", "L6"]
   },
   {
     regionCode: "ca-bc-vancouver",
     regionLabel: "Metro Vancouver, BC",
     province: "BC",
-    cities: ["vancouver", "burnaby", "surrey", "richmond", "coquitlam", "new westminster"]
+    cities: ["vancouver", "burnaby", "surrey", "richmond", "coquitlam", "new westminster"],
+    fsaPrefixes: ["V3", "V4", "V5", "V6", "V7"]
+  },
+  {
+    regionCode: "ca-bc-victoria",
+    regionLabel: "Greater Victoria, BC",
+    province: "BC",
+    cities: ["victoria", "saanich", "sidney", "langford", "esquimalt", "oak bay"],
+    fsaPrefixes: ["V8", "V9A", "V9B"]
   },
   {
     regionCode: "ca-ab-calgary",
     regionLabel: "Calgary, AB",
     province: "AB",
-    cities: ["calgary"]
+    cities: ["calgary"],
+    fsaPrefixes: ["T1", "T2", "T3"]
+  },
+  {
+    regionCode: "ca-ab-edmonton",
+    regionLabel: "Edmonton, AB",
+    province: "AB",
+    cities: ["edmonton", "st. albert", "sherwood park"],
+    fsaPrefixes: ["T5", "T6"]
   },
   {
     regionCode: "ca-qc-montreal",
     regionLabel: "Montreal, QC",
     province: "QC",
-    cities: ["montreal", "laval", "longueuil"]
+    cities: ["montreal", "laval", "longueuil"],
+    fsaPrefixes: ["H1", "H2", "H3", "H4", "H7"]
+  },
+  {
+    regionCode: "ca-on-ottawa",
+    regionLabel: "Ottawa, ON",
+    province: "ON",
+    cities: ["ottawa", "kanata", "nepean", "orleans"],
+    fsaPrefixes: ["K1", "K2", "K4"]
   }
 ];
 
@@ -120,6 +153,33 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     maintenancePct: 5.3,
     managementFeePct: 8
   },
+  "ca-bc-victoria": {
+    monthlyRent: 2400,
+    vacancyPct: 1.4,
+    annualPropertyTax: 3200,
+    monthlyInsurance: 110,
+    monthlyUtilities: 190,
+    maintenancePct: 5.1,
+    managementFeePct: 8
+  },
+  "ca-ab-edmonton": {
+    monthlyRent: 2150,
+    vacancyPct: 4.2,
+    annualPropertyTax: 3300,
+    monthlyInsurance: 105,
+    monthlyUtilities: 210,
+    maintenancePct: 5.9,
+    managementFeePct: 8
+  },
+  "ca-on-ottawa": {
+    monthlyRent: 2350,
+    vacancyPct: 2.2,
+    annualPropertyTax: 3900,
+    monthlyInsurance: 115,
+    monthlyUtilities: 200,
+    maintenancePct: 5.2,
+    managementFeePct: 8
+  },
   [FALLBACK_REGION.regionCode]: {
     monthlyRent: 2500,
     vacancyPct: 2.5,
@@ -146,22 +206,66 @@ function normalize(text: string): string {
   return text.trim().toLowerCase();
 }
 
+function normalizedPostalCode(postal: string): string {
+  return postal.toUpperCase().replace(/\s+/gu, "");
+}
+
+function provinceFromPostal(postal: string): string | undefined {
+  const first = postal.charAt(0).toUpperCase();
+  if (["V"].includes(first)) return "BC";
+  if (["T"].includes(first)) return "AB";
+  if (["K", "L", "M", "N", "P"].includes(first)) return "ON";
+  if (["H", "J"].includes(first)) return "QC";
+  return undefined;
+}
+
+function extractPostalCode(rawPostal: string, address: string): string {
+  const normalizedRaw = normalizedPostalCode(rawPostal);
+  if (/^[A-Z]\d[A-Z]\d[A-Z]\d$/u.test(normalizedRaw)) {
+    return normalizedRaw;
+  }
+  const match = address.toUpperCase().match(/[A-Z]\d[A-Z]\s?\d[A-Z]\d/u);
+  if (match) {
+    return normalizedPostalCode(match[0]);
+  }
+  return "";
+}
+
 export function inferRegion(listing: ListingRecord): { regionCode: string; regionLabel: string } {
   const raw = asObject(listing.rawSnapshot);
   const location = asObject(raw.location);
   const nested = asObject(raw.rawSnapshot);
   const nestedLocation = asObject(nested.location);
   const city = normalize(asString(location.city) || asString(nestedLocation.city));
-  const province = normalize(asString(location.province) || asString(nestedLocation.province));
+  const rawProvince = asString(location.province) || asString(nestedLocation.province);
+  const postalCode = extractPostalCode(
+    asString(location.postalCode) || asString(nestedLocation.postalCode),
+    listing.address ?? ""
+  );
+  const inferredProvince = provinceFromPostal(postalCode);
+  const province = normalize(rawProvince || inferredProvince || "");
   const address = normalize(listing.address ?? "");
+  const fsa = postalCode.slice(0, 3);
 
-  for (const entry of REGION_CITY_MAP) {
+  for (const entry of REGION_RULES) {
     const inProvince = province ? normalize(entry.province) === province : true;
     if (!inProvince) {
       continue;
     }
     if (entry.cities.some((c) => city.includes(c) || address.includes(c))) {
       return { regionCode: entry.regionCode, regionLabel: entry.regionLabel };
+    }
+  }
+
+  if (fsa) {
+    for (const entry of REGION_RULES) {
+      const inProvince = province ? normalize(entry.province) === province : true;
+      if (!inProvince) {
+        continue;
+      }
+      if (entry.fsaPrefixes.some((prefix) => fsa.startsWith(prefix))) {
+        return { regionCode: entry.regionCode, regionLabel: entry.regionLabel };
+      }
     }
   }
 
@@ -331,7 +435,11 @@ export async function resolveBenchmarkAssumptions(listing: ListingRecord): Promi
   const rentRows = (rentResult.data ?? []) as RentBenchmarkRow[];
   const vacancyRows = (vacancyResult.data ?? []) as VacancyBenchmarkRow[];
   const costRows = (costsResult.data ?? []) as CostBenchmarkRow[];
-  const fallbackValues = FALLBACK_VALUES[region.regionCode] ?? FALLBACK_VALUES[FALLBACK_REGION.regionCode];
+  const fallbackValues: Partial<ListingAssumptions> =
+    FALLBACK_VALUES[region.regionCode] ??
+    FALLBACK_VALUES[FALLBACK_REGION.regionCode] ??
+    FALLBACK_VALUES["ca-on-gta"] ??
+    {};
 
   const assumptionSources: AssumptionSources = {};
   const assumptions: ListingAssumptions = { ...defaults };
