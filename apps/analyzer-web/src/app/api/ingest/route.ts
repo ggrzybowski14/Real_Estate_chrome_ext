@@ -150,36 +150,50 @@ export async function POST(request: Request) {
     url: normalizedUrl
   };
 
-  let matchedListing: Record<string, unknown> | null = null;
-  if (listing.sourceListingId) {
-    const { data } = await timedStep(
-      "dedupeBySourceListingId",
-      () =>
-        supabase
-          .from("listings")
-          .select("*")
-          .eq("source", listing.source)
-          .eq("source_listing_id", listing.sourceListingId)
-          .order("captured_at", { ascending: false })
-          .limit(1),
-      { source: listing.source, sourceListingId: listing.sourceListingId }
-    );
-    matchedListing = data?.[0] ?? null;
-  }
+  const sourceLookupPromise = listing.sourceListingId
+    ? timedStep(
+        "dedupeBySourceListingId",
+        () =>
+          supabase
+            .from("listings")
+            .select("*")
+            .eq("source", listing.source)
+            .eq("source_listing_id", listing.sourceListingId)
+            .order("captured_at", { ascending: false })
+            .limit(1),
+        { source: listing.source, sourceListingId: listing.sourceListingId }
+      )
+    : Promise.resolve({ data: null });
 
-  if (!matchedListing) {
-    const { data } = await timedStep(
-      "dedupeByUrl",
-      () =>
-        supabase
-          .from("listings")
-          .select("*")
-          .eq("url", normalizedUrl)
-          .order("captured_at", { ascending: false })
-          .limit(1),
-      { normalizedUrl }
-    );
-    matchedListing = data?.[0] ?? null;
+  const urlLookupPromise = timedStep(
+    "dedupeByUrl",
+    () =>
+      supabase
+        .from("listings")
+        .select("*")
+        .eq("url", normalizedUrl)
+        .order("captured_at", { ascending: false })
+        .limit(1),
+    { normalizedUrl }
+  );
+
+  const [sourceLookup, urlLookup] = await Promise.all([sourceLookupPromise, urlLookupPromise]);
+  const sourceMatched = sourceLookup.data?.[0] ?? null;
+  const urlMatched = urlLookup.data?.[0] ?? null;
+  const matchedListing: Record<string, unknown> | null = sourceMatched ?? urlMatched;
+
+  if (
+    sourceMatched &&
+    urlMatched &&
+    String(sourceMatched.id) !== String(urlMatched.id)
+  ) {
+    console.info("[ingest] dedupe-conflict", {
+      requestId,
+      sourceMatchedId: String(sourceMatched.id),
+      urlMatchedId: String(urlMatched.id),
+      sourceListingId: listing.sourceListingId,
+      normalizedUrl
+    });
   }
 
   let persistedListing: Record<string, unknown> | null = null;
