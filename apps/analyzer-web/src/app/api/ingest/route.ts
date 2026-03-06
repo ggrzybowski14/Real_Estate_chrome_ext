@@ -46,14 +46,101 @@ function mergeListingForUpdate(
 }
 
 export async function POST(request: Request) {
-  const rawPayload = await request.json().catch(() => null);
+  const requestId = `ingest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const startedAt = new Date().toISOString();
+  const startedMs = performance.now();
+  const timingsMs: Record<string, number> = {};
+  const stepEvents: Array<{
+    step: string;
+    startedAt: string;
+    endedAt: string;
+    durationMs: number;
+    elapsedMs: number;
+    meta?: Record<string, unknown>;
+  }> = [];
+  const timedStep = async <T>(
+    step: string,
+    run: () => Promise<T> | T,
+    meta?: Record<string, unknown>
+  ): Promise<T> => {
+    const stepStartedAt = new Date().toISOString();
+    const stepStartMs = performance.now();
+    console.info("[ingest] step:start", {
+      requestId,
+      step,
+      startedAt: stepStartedAt,
+      elapsedMs: Math.round(stepStartMs - startedMs),
+      ...(meta ?? {})
+    });
+    try {
+      const result = await run();
+      const endedAt = new Date().toISOString();
+      const durationMs = Math.round(performance.now() - stepStartMs);
+      const elapsedMs = Math.round(performance.now() - startedMs);
+      timingsMs[step] = elapsedMs;
+      stepEvents.push({
+        step,
+        startedAt: stepStartedAt,
+        endedAt,
+        durationMs,
+        elapsedMs,
+        meta
+      });
+      console.info("[ingest] step:done", {
+        requestId,
+        step,
+        endedAt,
+        durationMs,
+        elapsedMs,
+        ...(meta ?? {})
+      });
+      return result;
+    } catch (error) {
+      const endedAt = new Date().toISOString();
+      const durationMs = Math.round(performance.now() - stepStartMs);
+      const elapsedMs = Math.round(performance.now() - startedMs);
+      console.info("[ingest] step:error", {
+        requestId,
+        step,
+        endedAt,
+        durationMs,
+        elapsedMs,
+        error: error instanceof Error ? error.message : "unknown",
+        ...(meta ?? {})
+      });
+      throw error;
+    }
+  };
+
+  console.info("[ingest] start", { requestId, startedAt });
+  const rawPayload = await timedStep("requestParsed", () => request.json().catch(() => null));
   if (!rawPayload || typeof rawPayload !== "object") {
-    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    const endedAt = new Date().toISOString();
+    const totalMs = Math.round(performance.now() - startedMs);
+    console.info("[ingest] invalid-payload", { requestId, endedAt, totalMs, timingsMs, stepEvents });
+    return NextResponse.json(
+      { error: "Invalid payload", requestId, startedAt, endedAt, totalMs, timingsMs, stepEvents },
+      { status: 400 }
+    );
   }
 
-  const listing = parseIncomingListing(JSON.stringify(rawPayload));
+  const listing = await timedStep("incomingParsed", () => parseIncomingListing(JSON.stringify(rawPayload)));
   if (!listing) {
-    return NextResponse.json({ error: "Payload could not be parsed into listing" }, { status: 400 });
+    const endedAt = new Date().toISOString();
+    const totalMs = Math.round(performance.now() - startedMs);
+    console.info("[ingest] listing-parse-failed", { requestId, endedAt, totalMs, timingsMs, stepEvents });
+    return NextResponse.json(
+      {
+        error: "Payload could not be parsed into listing",
+        requestId,
+        startedAt,
+        endedAt,
+        totalMs,
+        timingsMs,
+        stepEvents
+      },
+      { status: 400 }
+    );
   }
 
   const supabase = getSupabaseAdminClient();
@@ -65,23 +152,33 @@ export async function POST(request: Request) {
 
   let matchedListing: Record<string, unknown> | null = null;
   if (listing.sourceListingId) {
-    const { data } = await supabase
-      .from("listings")
-      .select("*")
-      .eq("source", listing.source)
-      .eq("source_listing_id", listing.sourceListingId)
-      .order("captured_at", { ascending: false })
-      .limit(1);
+    const { data } = await timedStep(
+      "dedupeBySourceListingId",
+      () =>
+        supabase
+          .from("listings")
+          .select("*")
+          .eq("source", listing.source)
+          .eq("source_listing_id", listing.sourceListingId)
+          .order("captured_at", { ascending: false })
+          .limit(1),
+      { source: listing.source, sourceListingId: listing.sourceListingId }
+    );
     matchedListing = data?.[0] ?? null;
   }
 
   if (!matchedListing) {
-    const { data } = await supabase
-      .from("listings")
-      .select("*")
-      .eq("url", normalizedUrl)
-      .order("captured_at", { ascending: false })
-      .limit(1);
+    const { data } = await timedStep(
+      "dedupeByUrl",
+      () =>
+        supabase
+          .from("listings")
+          .select("*")
+          .eq("url", normalizedUrl)
+          .order("captured_at", { ascending: false })
+          .limit(1),
+      { normalizedUrl }
+    );
     matchedListing = data?.[0] ?? null;
   }
 
@@ -90,27 +187,55 @@ export async function POST(request: Request) {
 
   if (matchedListing?.id) {
     const updatePayload = mergeListingForUpdate(matchedListing, listingInsert);
-    const { data, error } = await supabase
-      .from("listings")
-      .update(updatePayload)
-      .eq("id", String(matchedListing.id))
-      .select("*")
-      .single();
+    const { data, error } = await timedStep(
+      "listingPersisted:update",
+      () =>
+        supabase
+          .from("listings")
+          .update(updatePayload)
+          .eq("id", String(matchedListing.id))
+          .select("*")
+          .single(),
+      { matchedListingId: String(matchedListing.id) }
+    );
     persistedListing = data;
     listingError = error;
   } else {
-    const { data, error } = await supabase
-      .from("listings")
-      .insert(listingInsert)
-      .select("*")
-      .single();
+    const { data, error } = await timedStep(
+      "listingPersisted:insert",
+      () =>
+        supabase
+          .from("listings")
+          .insert(listingInsert)
+          .select("*")
+          .single(),
+      { normalizedUrl }
+    );
     persistedListing = data;
     listingError = error;
   }
 
   if (listingError || !persistedListing) {
+    const endedAt = new Date().toISOString();
+    const totalMs = Math.round(performance.now() - startedMs);
+    console.info("[ingest] listing-save-failed", {
+      requestId,
+      endedAt,
+      totalMs,
+      timingsMs,
+      stepEvents,
+      error: listingError?.message ?? "unknown"
+    });
     return NextResponse.json(
-      { error: listingError?.message ?? "Could not save listing" },
+      {
+        error: listingError?.message ?? "Could not save listing",
+        requestId,
+        startedAt,
+        endedAt,
+        totalMs,
+        timingsMs,
+        stepEvents
+      },
       { status: 500 }
     );
   }
@@ -122,33 +247,84 @@ export async function POST(request: Request) {
   let assumptionSources = undefined;
   let benchmarkContext = undefined;
   try {
-    const benchmark = await resolveBenchmarkAssumptions(listingRecord);
+    const benchmark = await timedStep(
+      "assumptionsResolved",
+      () => resolveBenchmarkAssumptions(listingRecord),
+      { listingId: listingRecord.id }
+    );
     assumptions = benchmark.assumptions;
     assumptionSources = benchmark.assumptionSources;
     benchmarkContext = benchmark.benchmarkContext;
-  } catch {
+  } catch (error) {
+    console.info("[ingest] assumptionsResolved:fallback-defaults", {
+      requestId,
+      error: error instanceof Error ? error.message : "unknown"
+    });
     assumptions = defaultAssumptionsFor(listingRecord);
   }
-  const analysis = runRoiAnalysis(listingRecord, assumptions);
+  const analysis = await timedStep("analysisComputed", () => runRoiAnalysis(listingRecord, assumptions), {
+    listingId: listingRecord.id
+  });
   analysis.assumptionSources = assumptionSources;
   analysis.benchmarkContext = benchmarkContext;
-  const { data: insertedRun, error: runError } = await supabase
-    .from("analysis_runs")
-    .insert(mapAnalysisToInsert(analysis))
-    .select("*")
-    .single();
+  const { data: insertedRun, error: runError } = await timedStep(
+    "analysisPersisted",
+    () =>
+      supabase
+        .from("analysis_runs")
+        .insert(mapAnalysisToInsert(analysis))
+        .select("*")
+        .single(),
+    { listingId: listingRecord.id }
+  );
 
   if (runError || !insertedRun) {
+    const endedAt = new Date().toISOString();
+    const totalMs = Math.round(performance.now() - startedMs);
+    console.info("[ingest] analysis-save-failed", {
+      requestId,
+      endedAt,
+      totalMs,
+      timingsMs,
+      stepEvents,
+      error: runError?.message ?? "unknown"
+    });
     return NextResponse.json(
-      { error: runError?.message ?? "Could not save analysis run" },
+      {
+        error: runError?.message ?? "Could not save analysis run",
+        requestId,
+        startedAt,
+        endedAt,
+        totalMs,
+        timingsMs,
+        stepEvents
+      },
       { status: 500 }
     );
   }
 
+  const endedAt = new Date().toISOString();
+  const totalMs = Math.round(performance.now() - startedMs);
+  console.info("[ingest] success", {
+    requestId,
+    endedAt,
+    totalMs,
+    timingsMs,
+    stepEvents,
+    listingId: listingRecord.id
+  });
   return NextResponse.json({
     listingId: listingRecord.id,
     score: insertedRun.score,
     listing: listingRecord,
+    diagnostics: {
+      requestId,
+      startedAt,
+      endedAt,
+      totalMs,
+      timingsMs,
+      stepEvents
+    },
     latestAnalysis: mapAnalysisRowToResult(
       insertedRun as Parameters<typeof mapAnalysisRowToResult>[0]
     )
