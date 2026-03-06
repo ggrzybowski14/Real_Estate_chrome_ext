@@ -118,6 +118,29 @@ test("pickBestRentRow prioritizes direct then bucket fallback", () => {
   assert.ok(bucket.row);
 });
 
+test("pickBestRentRow returns no data when bedroom bucket has no match", () => {
+  const rows = [
+    {
+      region_code: "ca-bc-victoria",
+      region_label: "Greater Victoria, BC",
+      property_type: "apartment",
+      bedrooms: 2,
+      sqft_band: "900_1199",
+      year_built_band: null,
+      period: "2025-Q1",
+      median_rent: 2400,
+      source_name: "CMHC",
+      source_publisher: "CMHC",
+      source_url: "https://example.com",
+      source_fetched_at: "2025-01-01T00:00:00.000Z"
+    }
+  ];
+
+  const result = pickBestRentRow(rows, "apartment", 4, "gte_1600");
+  assert.equal(result.method, "default");
+  assert.equal(result.row, null);
+});
+
 test("pickBestVacancyRow falls back to regional entry", () => {
   const rows = [
     {

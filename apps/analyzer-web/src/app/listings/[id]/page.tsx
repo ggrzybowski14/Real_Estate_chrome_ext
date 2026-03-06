@@ -49,6 +49,8 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
   const monthlyMaintenance = (assumptions?.monthlyRent ?? 0) * ((assumptions?.maintenancePct ?? 0) / 100);
   const monthlyManagement = (assumptions?.monthlyRent ?? 0) * ((assumptions?.managementFeePct ?? 0) / 100);
   const monthlyStrataFees = stored?.listing.condoFeesMonthly ?? 0;
+  const rentSource = assumptionSources.monthlyRent;
+  const hasRentEstimate = (assumptions?.monthlyRent ?? 0) > 0 && rentSource?.method !== "default";
   const grossMonthlyUpkeepCost =
     monthlyMaintenance +
     monthlyPropertyTax +
@@ -389,7 +391,8 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Monthly rent</td>
               <td className="value">
-                {formatCurrency(assumptions.monthlyRent)} <SourceHelp field="monthlyRent" />
+                {hasRentEstimate ? formatCurrency(assumptions.monthlyRent) : "No data found"}{" "}
+                <SourceHelp field="monthlyRent" />
               </td>
             </tr>
             <tr>
@@ -400,11 +403,13 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             </tr>
             <tr>
               <td className="label">Monthly rent after vacancy</td>
-              <td className="value">{formatCurrency(effectiveMonthlyRent)}</td>
+              <td className="value">{hasRentEstimate ? formatCurrency(effectiveMonthlyRent) : "No data found"}</td>
             </tr>
             <tr>
               <td className="label">Gross annual rent (after vacancy)</td>
-              <td className="value">{formatCurrency(grossAnnualRentAfterVacancy)}</td>
+              <td className="value">
+                {hasRentEstimate ? formatCurrency(grossAnnualRentAfterVacancy) : "No data found"}
+              </td>
             </tr>
           </tbody>
         </table>

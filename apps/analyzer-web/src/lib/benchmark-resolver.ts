@@ -380,9 +380,6 @@ export function pickBestRentRow(
   const bucket = ordered.find((row) => row.property_type === propertyClass && row.bedrooms === beds);
   if (bucket) return { row: bucket, method: "bucket_match", confidence: 0.8 };
 
-  const regional = ordered.find((row) => row.property_type === propertyClass);
-  if (regional) return { row: regional, method: "regional_fallback", confidence: 0.65 };
-
   return { row: null, method: "default", confidence: 0.3 };
 }
 
@@ -462,13 +459,23 @@ export async function resolveBenchmarkAssumptions(listing: ListingRecord): Promi
         fetchedAt: rentSelection.row.source_fetched_at
       }
     );
-  } else if (fallbackValues.monthlyRent) {
-    assumptions.monthlyRent = fallbackValues.monthlyRent;
-    assumptionSources.monthlyRent = fallbackSource(
+  } else {
+    assumptions.monthlyRent = 0;
+    assumptionSources.monthlyRent = buildSource(
       "monthlyRent",
       assumptions.monthlyRent,
-      region.regionLabel,
-      "No direct rent row found for this bedroom/size bucket."
+      "default",
+      0,
+      {
+        publisher: "No benchmark match",
+        dataset: "StatCan benchmark coverage",
+        metric: "median_rent",
+        region: region.regionLabel,
+        period: "n/a",
+        url: "",
+        fetchedAt: new Date().toISOString()
+      },
+      "No rent benchmark found for this property type + bedroom + size bucket."
     );
   }
 
