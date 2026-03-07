@@ -9,6 +9,7 @@ export interface ListingDisplayData {
   country?: string;
   description?: string;
   propertyType?: string;
+  yearBuilt?: number;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -27,6 +28,19 @@ function stringArray(value: unknown): string[] {
     return [];
   }
   return value.filter((v): v is string => typeof v === "string" && Boolean(v));
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/[^0-9.-]+/gu, ""));
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 export function getListingDisplayData(listing: ListingRecord): ListingDisplayData {
@@ -58,6 +72,7 @@ export function getListingDisplayData(listing: ListingRecord): ListingDisplayDat
     propertyType:
       listing.propertyType ??
       stringValue(raw.propertyType) ??
-      stringValue(nested.propertyType)
+      stringValue(nested.propertyType),
+    yearBuilt: numberValue(raw.yearBuilt) ?? numberValue(nested.yearBuilt) ?? numberValue(asObject(raw.data).yearBuilt)
   };
 }

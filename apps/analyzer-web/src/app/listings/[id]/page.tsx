@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type {
   AssumptionField,
   AssumptionSourceDetail,
@@ -20,6 +20,25 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
   const [benchmarkContext, setBenchmarkContext] = useState<BenchmarkContext | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
+  function buildScrapedTaxSource(value: number, url: string, capturedAt: string): AssumptionSourceDetail {
+    return {
+      field: "annualPropertyTax",
+      value,
+      method: "direct_match",
+      confidence: 0.95,
+      notes: "Using scraped annual property tax from listing details.",
+      reference: {
+        publisher: "Realtor.ca listing details",
+        dataset: "Property Summary scrape",
+        metric: "property_tax_annual",
+        region: benchmarkContext?.regionLabel ?? "Listing source",
+        period: "listing_current",
+        url,
+        fetchedAt: capturedAt
+      }
+    };
+  }
+
   useEffect(() => {
     void fetch(`/api/listings/${params.id}`)
       .then((res) => res.json())
@@ -29,9 +48,25 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
           return;
         }
         const current = data as StoredListing;
+        const scrapedAnnualTax = current.listing.taxesAnnual;
+        const shouldPreferScrapedTax = typeof scrapedAnnualTax === "number" && scrapedAnnualTax > 0;
+        const nextAssumptions = shouldPreferScrapedTax
+          ? { ...current.assumptions, annualPropertyTax: scrapedAnnualTax }
+          : current.assumptions;
+        const nextSources = current.latestAnalysis.assumptionSources ?? {};
+        const nextAssumptionSources = shouldPreferScrapedTax
+          ? {
+              ...nextSources,
+              annualPropertyTax: buildScrapedTaxSource(
+                scrapedAnnualTax as number,
+                current.listing.url,
+                current.listing.capturedAt
+              )
+            }
+          : nextSources;
         setStored(current);
-        setAssumptions(current.assumptions);
-        setAssumptionSources(current.latestAnalysis.assumptionSources ?? {});
+        setAssumptions(nextAssumptions);
+        setAssumptionSources(nextAssumptionSources);
         setBenchmarkContext(current.latestAnalysis.benchmarkContext);
       })
       .catch(() => setError("Could not load listing"));
@@ -46,7 +81,7 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
   const closingCosts = propertyCost * ((assumptions?.closingCostsPct ?? 0) / 100);
   const financedAmount = Math.max(propertyCost - downPaymentCost, 0);
   const monthlyPropertyTax = (assumptions?.annualPropertyTax ?? 0) / 12;
-  const monthlyMaintenance = (assumptions?.monthlyRent ?? 0) * ((assumptions?.maintenancePct ?? 0) / 100);
+  const monthlyMaintenance = propertyCost * ((assumptions?.maintenancePct ?? 0) / 100) / 12;
   const monthlyManagement = (assumptions?.monthlyRent ?? 0) * ((assumptions?.managementFeePct ?? 0) / 100);
   const monthlyStrataFees = stored?.listing.condoFeesMonthly ?? 0;
   const rentSource = assumptionSources.monthlyRent;
@@ -64,10 +99,20 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
   const capRatePct = propertyCost > 0 ? (latest ? (latest.annualNOI / propertyCost) * 100 : 0) : 0;
 
   const canRun = Boolean(stored && assumptions);
+  const annualTaxSource = assumptionSources.annualPropertyTax;
+  const annualTaxSourceLabel = annualTaxSource
+    ? annualTaxSource.reference.publisher === "Realtor.ca listing details"
+      ? "from listing"
+      : "from data pulled"
+    : "from data pulled";
   const assumptionEntries = useMemo(
     () => Object.entries(assumptions ?? {}) as [AssumptionField, number][],
     [assumptions]
   );
+  const underwritingInputStyle: CSSProperties = {
+    width: 88,
+    marginRight: 6
+  };
 
   function updateField(key: AssumptionField, value: number): void {
     if (!assumptions) {
@@ -264,6 +309,16 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <div className="label">Square feet</div>
             <div className="value">{stored.listing.sqft ?? "-"}</div>
           </div>
+          <div>
+            <div className="label">Year built</div>
+            <div className="value">{display?.yearBuilt ?? "-"}</div>
+          </div>
+          <div>
+            <div className="label">Property tax (scraped)</div>
+            <div className="value">
+              {stored.listing.taxesAnnual ? `${formatCurrency(stored.listing.taxesAnnual)} / year` : "-"}
+            </div>
+          </div>
         </div>
         <p>{display?.description ?? stored.listing.description ?? ""}</p>
       </div>
@@ -311,12 +366,23 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Down payment ({assumptions.downPaymentPct}%)</td>
               <td className="value">
-                {formatCurrency(downPaymentCost)} <SourceHelp field="downPaymentPct" />
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="100"
+                  value={assumptions.downPaymentPct}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("downPaymentPct", Number(event.target.value))}
+                />
+                % ({formatCurrency(downPaymentCost)}) <SourceHelp field="downPaymentPct" />
               </td>
             </tr>
             <tr>
               <td className="label">Estimated closing costs ({assumptions.closingCostsPct}%)</td>
-              <td className="value">{formatCurrency(closingCosts)}</td>
+              <td className="value">
+                {formatCurrency(closingCosts)} <SourceHelp field="closingCostsPct" />
+              </td>
             </tr>
             <tr>
               <td className="label">Financed amount</td>
@@ -325,13 +391,31 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Mortgage rate</td>
               <td className="value">
-                {formatPct(assumptions.mortgageRatePct)} <SourceHelp field="mortgageRatePct" />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="25"
+                  value={assumptions.mortgageRatePct}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("mortgageRatePct", Number(event.target.value))}
+                />
+                % <SourceHelp field="mortgageRatePct" />
               </td>
             </tr>
             <tr>
               <td className="label">Amortization</td>
               <td className="value">
-                {assumptions.amortizationYears} years <SourceHelp field="amortizationYears" />
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  max="50"
+                  value={assumptions.amortizationYears}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("amortizationYears", Number(event.target.value))}
+                />
+                years <SourceHelp field="amortizationYears" />
               </td>
             </tr>
           </tbody>
@@ -341,15 +425,20 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
         <table className="underwriting-table underwriting-table-section">
           <tbody>
             <tr>
-              <td className="label">Maintenance</td>
+              <td className="label">Maintenance reserve ({assumptions.maintenancePct}% annual)</td>
               <td className="value">
                 {formatCurrency(monthlyMaintenance)} / month <SourceHelp field="maintenancePct" />
               </td>
             </tr>
             <tr>
+              <td className="label">Strata / condo fees</td>
+              <td className="value">{formatCurrency(monthlyStrataFees)} / month</td>
+            </tr>
+            <tr>
               <td className="label">Property tax</td>
               <td className="value">
-                {formatCurrency(monthlyPropertyTax)} / month <SourceHelp field="annualPropertyTax" />
+                {formatCurrency(monthlyPropertyTax)} / month ({annualTaxSourceLabel}){" "}
+                <SourceHelp field="annualPropertyTax" />
               </td>
             </tr>
             <tr>
@@ -369,10 +458,6 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
               <td className="value">
                 {formatCurrency(monthlyManagement)} / month <SourceHelp field="managementFeePct" />
               </td>
-            </tr>
-            <tr>
-              <td className="label">Strata / condo fees</td>
-              <td className="value">{formatCurrency(monthlyStrataFees)} / month</td>
             </tr>
             <tr>
               <td className="label">Gross monthly upkeep cost</td>

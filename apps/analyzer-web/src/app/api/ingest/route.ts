@@ -142,6 +142,32 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  if (!listing.price || listing.price <= 0) {
+    const endedAt = new Date().toISOString();
+    const totalMs = Math.round(performance.now() - startedMs);
+    console.info("[ingest] missing-property-cost", {
+      requestId,
+      endedAt,
+      totalMs,
+      timingsMs,
+      stepEvents,
+      sourceListingId: listing.sourceListingId ?? null,
+      url: listing.url
+    });
+    return NextResponse.json(
+      {
+        error:
+          "Property price could not be captured from the listing. Please reload the listing page and run Analyze again.",
+        requestId,
+        startedAt,
+        endedAt,
+        totalMs,
+        timingsMs,
+        stepEvents
+      },
+      { status: 422 }
+    );
+  }
 
   const supabase = getSupabaseAdminClient();
   const normalizedUrl = canonicalUrl(listing.url);

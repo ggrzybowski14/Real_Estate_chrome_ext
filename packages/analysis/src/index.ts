@@ -53,7 +53,8 @@ export function defaultAssumptionsFor(listing: ListingRecord): ListingAssumption
     closingCostsPct: 1.5,
     monthlyRent: monthlyRentEstimate,
     vacancyPct: 5,
-    maintenancePct: 5,
+    // Annual maintenance reserve as a % of property value.
+    maintenancePct: 1,
     annualPropertyTax: listing.taxesAnnual ?? 3500,
     monthlyInsurance: 120,
     monthlyUtilities: 180,
@@ -78,7 +79,8 @@ export function runRoiAnalysis(
     assumptions.amortizationYears
   );
   const effectiveRent = assumptions.monthlyRent * (1 - assumptions.vacancyPct / 100);
-  const monthlyMaintenance = assumptions.monthlyRent * (assumptions.maintenancePct / 100);
+  // Maintenance is modeled as an annual reserve rate on property value.
+  const monthlyMaintenance = price * (assumptions.maintenancePct / 100) / 12;
   const monthlyManagement = assumptions.monthlyRent * (assumptions.managementFeePct / 100);
   const monthlyPropertyTax = assumptions.annualPropertyTax / 12;
 

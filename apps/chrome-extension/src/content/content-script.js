@@ -179,6 +179,72 @@ function inferMissingFields(payload) {
   return missing;
 }
 
+function parseYearBuilt(value) {
+  const parsed = extractNumber(value);
+  if (!parsed) {
+    return undefined;
+  }
+  if (parsed < 1800 || parsed > 2100) {
+    return undefined;
+  }
+  return Math.round(parsed);
+}
+
+function extractCondoFeesFromBody(bodyText) {
+  if (!bodyText) {
+    return undefined;
+  }
+  const matchers = [
+    /Maintenance Fees?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)(?:\s*(?:\/|per)?\s*month(?:ly)?|\s*Monthly)?/iu,
+    /Condo Fees?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)(?:\s*(?:\/|per)?\s*month(?:ly)?|\s*Monthly)?/iu
+  ];
+  for (const matcher of matchers) {
+    const matched = bodyText.match(matcher);
+    const parsed = extractNumber(matched?.[1]);
+    if (parsed && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function extractYearBuiltFromBody(bodyText) {
+  if (!bodyText) {
+    return undefined;
+  }
+  const matchers = [
+    /Year Built\s*[:\n]?\s*(\d{4})/iu,
+    /\bBuilt(?:\s+in)?\s*[:\n]?\s*(\d{4})\b/iu
+  ];
+  for (const matcher of matchers) {
+    const matched = bodyText.match(matcher);
+    const parsed = parseYearBuilt(matched?.[1]);
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function extractTaxesAnnualFromBody(bodyText) {
+  if (!bodyText) {
+    return undefined;
+  }
+  const matchers = [
+    /Property Taxes?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)/iu,
+    /Annual Taxes?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)/iu,
+    /Taxes?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)(?:\s*\/\s*\d{4})?/iu
+  ];
+  for (const matcher of matchers) {
+    const matched = bodyText.match(matcher);
+    const parsed = extractNumber(matched?.[1]);
+    if (parsed && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
 function parseListingPayload(source) {
   const url = source.url;
   const sourceListingId = url.match(/\/(\d+)(?:$|[/?#])/u)?.[1];
@@ -214,7 +280,8 @@ function parseListingPayload(source) {
       inferBuildingTypeFromDescription(source.meta?.description)
   );
   const taxesAnnual = extractNumber(source.data?.taxesAnnual);
-  const condoFeesMonthly = extractNumber(source.data?.condoFeesMonthly);
+  const condoFeesMonthly = extractNumber(source.data?.condoFeesMonthly) || extractCondoFeesFromBody(source.bodyText);
+  const yearBuilt = parseYearBuilt(source.data?.yearBuilt) || extractYearBuiltFromBody(source.bodyText);
 
   const payload = {
     source: "realtor.ca",
@@ -229,12 +296,14 @@ function parseListingPayload(source) {
     description,
     taxesAnnual,
     condoFeesMonthly,
+    yearBuilt,
     scrapeConfidence: 0.8,
     estimatedRent: undefined,
     missingFields: [],
     rawSnapshot: {
       titleText: source.titleText,
       h1Text: source.h1Text,
+      yearBuilt,
       meta: source.meta,
       data: source.data
     }
@@ -308,6 +377,18 @@ function buildScrapeSource() {
   }
   if (h1) {
     data.address = h1;
+  }
+  const condoFeesMonthly = extractCondoFeesFromBody(bodyText);
+  if (typeof condoFeesMonthly === "number") {
+    data.condoFeesMonthly = `${condoFeesMonthly}`;
+  }
+  const yearBuilt = extractYearBuiltFromBody(bodyText);
+  if (typeof yearBuilt === "number") {
+    data.yearBuilt = `${yearBuilt}`;
+  }
+  const taxesAnnual = extractTaxesAnnualFromBody(bodyText);
+  if (typeof taxesAnnual === "number") {
+    data.taxesAnnual = `${taxesAnnual}`;
   }
   return {
     url: window.location.href,

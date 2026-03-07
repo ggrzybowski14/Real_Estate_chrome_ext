@@ -59,6 +59,18 @@ type RegionRule = {
   fsaPrefixes: string[];
 };
 
+type ProvinceClosingModel = {
+  closingCostsPct: number;
+  label: string;
+  sourceUrl: string;
+};
+
+type MaintenanceRuleResult = {
+  annualReserveRatePct: number;
+  monthlyReserve: number;
+  note: string;
+};
+
 const REGION_RULES: RegionRule[] = [
   {
     regionCode: "ca-on-gta",
@@ -123,7 +135,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     annualPropertyTax: 4300,
     monthlyInsurance: 125,
     monthlyUtilities: 210,
-    maintenancePct: 5.5,
+    maintenancePct: 1.1,
     managementFeePct: 8
   },
   "ca-bc-vancouver": {
@@ -132,7 +144,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     annualPropertyTax: 3550,
     monthlyInsurance: 120,
     monthlyUtilities: 200,
-    maintenancePct: 5.2,
+    maintenancePct: 1,
     managementFeePct: 8
   },
   "ca-ab-calgary": {
@@ -141,7 +153,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     annualPropertyTax: 3700,
     monthlyInsurance: 110,
     monthlyUtilities: 220,
-    maintenancePct: 5.8,
+    maintenancePct: 1.1,
     managementFeePct: 8
   },
   "ca-qc-montreal": {
@@ -150,7 +162,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     annualPropertyTax: 3400,
     monthlyInsurance: 105,
     monthlyUtilities: 190,
-    maintenancePct: 5.3,
+    maintenancePct: 1,
     managementFeePct: 8
   },
   "ca-bc-victoria": {
@@ -159,7 +171,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     annualPropertyTax: 3200,
     monthlyInsurance: 110,
     monthlyUtilities: 190,
-    maintenancePct: 5.1,
+    maintenancePct: 1,
     managementFeePct: 8
   },
   "ca-ab-edmonton": {
@@ -168,7 +180,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     annualPropertyTax: 3300,
     monthlyInsurance: 105,
     monthlyUtilities: 210,
-    maintenancePct: 5.9,
+    maintenancePct: 1.15,
     managementFeePct: 8
   },
   "ca-on-ottawa": {
@@ -177,7 +189,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     annualPropertyTax: 3900,
     monthlyInsurance: 115,
     monthlyUtilities: 200,
-    maintenancePct: 5.2,
+    maintenancePct: 1.05,
     managementFeePct: 8
   },
   [FALLBACK_REGION.regionCode]: {
@@ -186,9 +198,42 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     annualPropertyTax: 3600,
     monthlyInsurance: 115,
     monthlyUtilities: 195,
-    maintenancePct: 5,
+    maintenancePct: 1,
     managementFeePct: 8
   }
+};
+
+const PROVINCE_CLOSING_MODEL: Record<string, ProvinceClosingModel> = {
+  BC: {
+    closingCostsPct: 2.2,
+    label: "BC Property Transfer Tax baseline",
+    sourceUrl:
+      "https://www2.gov.bc.ca/gov/content/taxes/property-taxes/property-transfer-tax"
+  },
+  ON: {
+    closingCostsPct: 2.0,
+    label: "ON Land Transfer Tax baseline",
+    sourceUrl: "https://www.ontario.ca/document/land-transfer-tax"
+  },
+  AB: {
+    closingCostsPct: 1.3,
+    label: "AB registration + legal baseline",
+    sourceUrl:
+      "https://www.alberta.ca/land-titles-current-fees"
+  },
+  QC: {
+    closingCostsPct: 2.1,
+    label: "QC welcome tax (droit de mutation) baseline",
+    sourceUrl:
+      "https://www.quebec.ca/en/homes-and-housing/property-transfer-duties"
+  }
+};
+
+const MAINTENANCE_PROVINCE_MULTIPLIER: Record<string, number> = {
+  BC: 1.1,
+  ON: 1,
+  AB: 0.95,
+  QC: 1
 };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -204,6 +249,21 @@ function asString(value: unknown): string {
 
 function normalize(text: string): string {
   return text.trim().toLowerCase();
+}
+
+function normalizeProvinceCode(raw: string): string | undefined {
+  const upper = raw.trim().toUpperCase();
+  if (!upper) return undefined;
+  if (upper === "BC" || upper === "BRITISH COLUMBIA") return "BC";
+  if (upper === "ON" || upper === "ONTARIO") return "ON";
+  if (upper === "AB" || upper === "ALBERTA") return "AB";
+  if (upper === "QC" || upper === "QUEBEC" || upper === "QUÉBEC") return "QC";
+  return undefined;
+}
+
+function roundTo(value: number, places = 2): number {
+  const factor = 10 ** places;
+  return Math.round(value * factor) / factor;
 }
 
 function normalizedPostalCode(postal: string): string {
@@ -270,6 +330,77 @@ export function inferRegion(listing: ListingRecord): { regionCode: string; regio
   }
 
   return FALLBACK_REGION;
+}
+
+function inferProvinceCode(listing: ListingRecord, regionCode: string): string | undefined {
+  const raw = asObject(listing.rawSnapshot);
+  const location = asObject(raw.location);
+  const nested = asObject(raw.rawSnapshot);
+  const nestedLocation = asObject(nested.location);
+  const rawProvince = asString(location.province) || asString(nestedLocation.province);
+  const fromRawProvince = normalizeProvinceCode(rawProvince);
+  if (fromRawProvince) {
+    return fromRawProvince;
+  }
+
+  const postalCode = extractPostalCode(
+    asString(location.postalCode) || asString(nestedLocation.postalCode),
+    listing.address ?? ""
+  );
+  const fromPostal = provinceFromPostal(postalCode);
+  if (fromPostal) {
+    return fromPostal;
+  }
+
+  const fromRegion = REGION_RULES.find((rule) => rule.regionCode === regionCode)?.province;
+  return fromRegion ? normalizeProvinceCode(fromRegion) : undefined;
+}
+
+function ageMaintenanceAdjustmentPct(yearBand?: string): number {
+  if (yearBand === "pre_1980") return 0.35;
+  if (yearBand === "1980_1999") return 0.2;
+  if (yearBand === "2000_2014") return 0.1;
+  if (yearBand === "2015_plus") return 0;
+  // Unknown year-built gets a modest reserve buffer.
+  return 0.15;
+}
+
+function maintenanceBaseRatePct(propertyClass: string, hasStrataFees: boolean): number {
+  if (propertyClass === "apartment") {
+    return hasStrataFees ? 0.35 : 0.65;
+  }
+  if (propertyClass === "townhouse") return hasStrataFees ? 0.6 : 0.9;
+  if (propertyClass === "duplex") return hasStrataFees ? 0.75 : 1;
+  if (propertyClass === "multi_family") return hasStrataFees ? 0.9 : 1.1;
+  if (propertyClass === "house") return hasStrataFees ? 0.95 : 1.2;
+  return 1;
+}
+
+function deriveMaintenanceRule(params: {
+  propertyClass: string;
+  hasStrataFees: boolean;
+  provinceCode?: string;
+  yearBand?: string;
+  propertyValue: number;
+}): MaintenanceRuleResult {
+  const baseRate = maintenanceBaseRatePct(params.propertyClass, params.hasStrataFees);
+  const ageAdj = ageMaintenanceAdjustmentPct(params.yearBand);
+  const provinceMult = MAINTENANCE_PROVINCE_MULTIPLIER[params.provinceCode ?? ""] ?? 1;
+  const annualReserveRatePct = roundTo((baseRate + ageAdj) * provinceMult, 3);
+  const monthlyReserve = roundTo((params.propertyValue * annualReserveRatePct) / 100 / 12, 2);
+  const strataText = params.hasStrataFees ? "strata fees detected (lower base)" : "no strata fees";
+  const ageText = params.yearBand ? `year band ${params.yearBand}` : "year-built unknown";
+  const provinceText = params.provinceCode ?? "unknown province";
+  const note =
+    `Value-based reserve selected: base ${baseRate}% + age adj ${ageAdj}% ` +
+    `with province multiplier ${provinceMult} (${provinceText}); ${strataText}; ${ageText}. ` +
+    `Annual reserve rate ${annualReserveRatePct}% of value gives ${monthlyReserve}/month.`;
+
+  return {
+    annualReserveRatePct,
+    monthlyReserve,
+    note
+  };
 }
 
 export function normalizePropertyClass(value?: string): string {
@@ -437,9 +568,32 @@ export async function resolveBenchmarkAssumptions(listing: ListingRecord): Promi
     FALLBACK_VALUES[FALLBACK_REGION.regionCode] ??
     FALLBACK_VALUES["ca-on-gta"] ??
     {};
+  const provinceCode = inferProvinceCode(listing, region.regionCode);
+  const hasStrataFees = (listing.condoFeesMonthly ?? 0) > 0;
+  const closingModel = provinceCode ? PROVINCE_CLOSING_MODEL[provinceCode] : undefined;
 
   const assumptionSources: AssumptionSources = {};
   const assumptions: ListingAssumptions = { ...defaults };
+
+  if (closingModel) {
+    assumptions.closingCostsPct = closingModel.closingCostsPct;
+    assumptionSources.closingCostsPct = buildSource(
+      "closingCostsPct",
+      assumptions.closingCostsPct,
+      "regional_fallback",
+      0.78,
+      {
+        publisher: "Provincial government fee schedules",
+        dataset: closingModel.label,
+        metric: "closing_costs_pct",
+        region: region.regionLabel,
+        period: "2026",
+        url: closingModel.sourceUrl,
+        fetchedAt: new Date().toISOString()
+      },
+      `Province-specific closing-cost baseline for ${provinceCode}.`
+    );
+  }
 
   const rentSelection = pickBestRentRow(rentRows, propertyClass, beds, sizeBand, builtBand);
   if (rentSelection.row) {
@@ -508,7 +662,25 @@ export async function resolveBenchmarkAssumptions(listing: ListingRecord): Promi
   }
 
   const taxSelection = pickCostValue(costRows, "property_tax", propertyClass);
-  if (taxSelection.row) {
+  if ((listing.taxesAnnual ?? 0) > 0) {
+    assumptions.annualPropertyTax = listing.taxesAnnual ?? defaults.annualPropertyTax;
+    assumptionSources.annualPropertyTax = buildSource(
+      "annualPropertyTax",
+      assumptions.annualPropertyTax,
+      "direct_match",
+      0.95,
+      {
+        publisher: "Realtor.ca listing details",
+        dataset: "Property Summary scrape",
+        metric: "property_tax_annual",
+        region: region.regionLabel,
+        period: "listing_current",
+        url: listing.url,
+        fetchedAt: listing.capturedAt
+      },
+      "Using scraped annual property tax from listing details."
+    );
+  } else if (taxSelection.row) {
     assumptions.annualPropertyTax =
       Number(taxSelection.row.value_annual) ||
       Number(taxSelection.row.value_monthly) * 12 ||
@@ -600,35 +772,62 @@ export async function resolveBenchmarkAssumptions(listing: ListingRecord): Promi
     );
   }
 
-  const maintenanceSelection = pickCostValue(costRows, "maintenance_pct", propertyClass);
-  if (maintenanceSelection.row) {
-    assumptions.maintenancePct =
-      Number(maintenanceSelection.row.value_monthly) ||
-      Number(maintenanceSelection.row.value_annual) ||
-      defaults.maintenancePct;
+  if ((listing.price ?? 0) > 0) {
+    const maintenanceRule = deriveMaintenanceRule({
+      propertyClass,
+      hasStrataFees,
+      provinceCode,
+      yearBand: builtBand,
+      propertyValue: listing.price ?? 0
+    });
+    assumptions.maintenancePct = maintenanceRule.annualReserveRatePct;
     assumptionSources.maintenancePct = buildSource(
       "maintenancePct",
       assumptions.maintenancePct,
-      maintenanceSelection.method,
-      maintenanceSelection.confidence,
+      "regional_fallback",
+      0.82,
       {
-        publisher: maintenanceSelection.row.source_publisher,
-        dataset: maintenanceSelection.row.source_name,
-        metric: "maintenance_pct",
-        region: maintenanceSelection.row.region_label,
-        period: maintenanceSelection.row.period,
-        url: maintenanceSelection.row.source_url,
-        fetchedAt: maintenanceSelection.row.source_fetched_at
+        publisher: "REA underwriting rules",
+        dataset: "Maintenance reserve model (value + age + strata + province)",
+        metric: "maintenance_annual_pct_of_value",
+        region: region.regionLabel,
+        period: "2026",
+        url: "https://www.cmhc-schl.gc.ca/",
+        fetchedAt: new Date().toISOString()
       }
     );
-  } else if (fallbackValues.maintenancePct !== undefined) {
-    assumptions.maintenancePct = fallbackValues.maintenancePct;
-    assumptionSources.maintenancePct = fallbackSource(
-      "maintenancePct",
-      assumptions.maintenancePct,
-      region.regionLabel,
-      "Fallback maintenance benchmark."
-    );
+    assumptionSources.maintenancePct.notes = maintenanceRule.note;
+  } else {
+    const maintenanceSelection = pickCostValue(costRows, "maintenance_pct", propertyClass);
+    if (maintenanceSelection.row) {
+      assumptions.maintenancePct =
+        Number(maintenanceSelection.row.value_monthly) ||
+        Number(maintenanceSelection.row.value_annual) ||
+        defaults.maintenancePct;
+      assumptionSources.maintenancePct = buildSource(
+        "maintenancePct",
+        assumptions.maintenancePct,
+        maintenanceSelection.method,
+        maintenanceSelection.confidence,
+        {
+          publisher: maintenanceSelection.row.source_publisher,
+          dataset: maintenanceSelection.row.source_name,
+          metric: "maintenance_pct",
+          region: maintenanceSelection.row.region_label,
+          period: maintenanceSelection.row.period,
+          url: maintenanceSelection.row.source_url,
+          fetchedAt: maintenanceSelection.row.source_fetched_at
+        }
+      );
+    } else if (fallbackValues.maintenancePct !== undefined) {
+      assumptions.maintenancePct = fallbackValues.maintenancePct;
+      assumptionSources.maintenancePct = fallbackSource(
+        "maintenancePct",
+        assumptions.maintenancePct,
+        region.regionLabel,
+        "Fallback maintenance benchmark."
+      );
+    }
   }
 
   const managementSelection = pickCostValue(costRows, "management_fee_pct", propertyClass);

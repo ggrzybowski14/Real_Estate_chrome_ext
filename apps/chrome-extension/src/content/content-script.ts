@@ -136,6 +136,61 @@ function collectLikelyListingPriceText(): string | undefined {
   return undefined;
 }
 
+function extractCondoFeesFromBody(bodyText: string): number | undefined {
+  const matchers = [
+    /Maintenance Fees?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)(?:\s*(?:\/|per)?\s*month(?:ly)?|\s*Monthly)?/iu,
+    /Condo Fees?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)(?:\s*(?:\/|per)?\s*month(?:ly)?|\s*Monthly)?/iu
+  ];
+  for (const matcher of matchers) {
+    const matched = bodyText.match(matcher);
+    if (!matched?.[1]) {
+      continue;
+    }
+    const parsed = Number(matched[1].replace(/[^0-9.-]+/g, ""));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function extractYearBuiltFromBody(bodyText: string): number | undefined {
+  const matchers = [
+    /Year Built\s*[:\n]?\s*(\d{4})/iu,
+    /\bBuilt(?:\s+in)?\s*[:\n]?\s*(\d{4})\b/iu
+  ];
+  for (const matcher of matchers) {
+    const matched = bodyText.match(matcher);
+    if (!matched?.[1]) {
+      continue;
+    }
+    const parsed = Number(matched[1]);
+    if (Number.isFinite(parsed) && parsed >= 1800 && parsed <= 2100) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function extractTaxesAnnualFromBody(bodyText: string): number | undefined {
+  const matchers = [
+    /Property Taxes?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)/iu,
+    /Annual Taxes?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)/iu,
+    /Taxes?\s*[:\n]?\s*\$?\s*([\d,]+(?:\.\d+)?)(?:\s*\/\s*\d{4})?/iu
+  ];
+  for (const matcher of matchers) {
+    const matched = bodyText.match(matcher);
+    if (!matched?.[1]) {
+      continue;
+    }
+    const parsed = Number(matched[1].replace(/[^0-9.-]+/g, ""));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
 function buildScrapeSource(): ScrapeSource {
   const h1 = document.querySelector("h1")?.textContent?.trim();
   const bodyText = document.body?.innerText ?? "";
@@ -152,6 +207,18 @@ function buildScrapeSource(): ScrapeSource {
   const extractedMetaPrice = parsePriceFromDescription(metaDescription);
   if (typeof extractedMetaPrice === "number") {
     data.price = `${extractedMetaPrice}`;
+  }
+  const condoFeesMonthly = extractCondoFeesFromBody(bodyText);
+  if (typeof condoFeesMonthly === "number") {
+    data.condoFeesMonthly = `${condoFeesMonthly}`;
+  }
+  const yearBuilt = extractYearBuiltFromBody(bodyText);
+  if (typeof yearBuilt === "number") {
+    data.yearBuilt = `${yearBuilt}`;
+  }
+  const taxesAnnual = extractTaxesAnnualFromBody(bodyText);
+  if (typeof taxesAnnual === "number") {
+    data.taxesAnnual = `${taxesAnnual}`;
   }
 
   return {

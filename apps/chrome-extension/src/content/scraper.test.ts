@@ -96,3 +96,23 @@ test("extracts building type from body summary label", () => {
 
   assert.equal(payload.propertyType, "Duplex");
 });
+
+test("extracts condo fees and year built from body text", () => {
+  const payload = parseListingPayload({
+    url: "https://www.realtor.ca/real-estate/33333333/test",
+    bodyText:
+      "Maintenance or Condo Information\nMaintenance Fees\n$633 Monthly\nBuilding Information\nYear Built\n1998"
+  });
+
+  assert.equal(payload.condoFeesMonthly, 633);
+  assert.equal(payload.yearBuilt, 1998);
+});
+
+test("extracts annual property taxes from body text", () => {
+  const payload = parseListingPayload({
+    url: "https://www.realtor.ca/real-estate/44444444/test",
+    bodyText: "Property Summary\nProperty Taxes\n$3,782 / 2025"
+  });
+
+  assert.equal(payload.taxesAnnual, 3782);
+});
