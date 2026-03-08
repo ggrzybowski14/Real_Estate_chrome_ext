@@ -98,6 +98,72 @@ main {
   font-weight: 650;
 }
 
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace-actions {
+  border: 1px solid #283244;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #111720;
+}
+
+.workspace-note {
+  margin: 8px 0;
+  color: #b6c0cf;
+  font-size: 13px;
+}
+
+.equation-list {
+  display: grid;
+  gap: 8px;
+}
+
+.equation-row {
+  border: 1px solid #283244;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #111720;
+}
+
+.equation-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.82;
+  margin-bottom: 3px;
+}
+
+.equation-expression {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  color: #b8c4d6;
+  line-height: 1.35;
+}
+
+.equation-result {
+  margin-top: 4px;
+  font-weight: 650;
+  font-size: 14px;
+  color: #e5ecf8;
+}
+
+.equation-note {
+  margin-top: 4px;
+  color: #a8b5c8;
+  font-size: 11px;
+}
+
+@media (max-width: 860px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .source-help-wrap {
   position: relative;
   display: inline-flex;

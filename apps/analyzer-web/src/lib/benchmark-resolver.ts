@@ -136,7 +136,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     monthlyInsurance: 125,
     monthlyUtilities: 210,
     maintenancePct: 1.1,
-    managementFeePct: 8
+    managementFeePct: 0
   },
   "ca-bc-vancouver": {
     monthlyRent: 3050,
@@ -145,7 +145,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     monthlyInsurance: 120,
     monthlyUtilities: 200,
     maintenancePct: 1,
-    managementFeePct: 8
+    managementFeePct: 0
   },
   "ca-ab-calgary": {
     monthlyRent: 2450,
@@ -154,7 +154,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     monthlyInsurance: 110,
     monthlyUtilities: 220,
     maintenancePct: 1.1,
-    managementFeePct: 8
+    managementFeePct: 0
   },
   "ca-qc-montreal": {
     monthlyRent: 2200,
@@ -163,7 +163,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     monthlyInsurance: 105,
     monthlyUtilities: 190,
     maintenancePct: 1,
-    managementFeePct: 8
+    managementFeePct: 0
   },
   "ca-bc-victoria": {
     monthlyRent: 2400,
@@ -172,7 +172,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     monthlyInsurance: 110,
     monthlyUtilities: 190,
     maintenancePct: 1,
-    managementFeePct: 8
+    managementFeePct: 0
   },
   "ca-ab-edmonton": {
     monthlyRent: 2150,
@@ -181,7 +181,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     monthlyInsurance: 105,
     monthlyUtilities: 210,
     maintenancePct: 1.15,
-    managementFeePct: 8
+    managementFeePct: 0
   },
   "ca-on-ottawa": {
     monthlyRent: 2350,
@@ -190,7 +190,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     monthlyInsurance: 115,
     monthlyUtilities: 200,
     maintenancePct: 1.05,
-    managementFeePct: 8
+    managementFeePct: 0
   },
   [FALLBACK_REGION.regionCode]: {
     monthlyRent: 2500,
@@ -199,7 +199,7 @@ const FALLBACK_VALUES: Record<string, Partial<ListingAssumptions>> = {
     monthlyInsurance: 115,
     monthlyUtilities: 195,
     maintenancePct: 1,
-    managementFeePct: 8
+    managementFeePct: 0
   }
 };
 

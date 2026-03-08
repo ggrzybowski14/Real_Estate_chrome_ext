@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type {
   AssumptionField,
   AssumptionSourceDetail,
@@ -12,6 +12,12 @@ import type {
 import { formatCurrency, formatPct } from "@/lib/format";
 import { getListingDisplayData } from "@/lib/listing-display";
 import type { StoredListing } from "@/lib/types";
+
+function formatNumber(value: number, digits = 2): string {
+  return Number.isFinite(value)
+    ? value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
+    : "0.00";
+}
 
 export default function ListingDetailPage({ params }: { params: { id: string } }) {
   const [stored, setStored] = useState<StoredListing | null>(null);
@@ -105,14 +111,39 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
       ? "from listing"
       : "from data pulled"
     : "from data pulled";
-  const assumptionEntries = useMemo(
-    () => Object.entries(assumptions ?? {}) as [AssumptionField, number][],
-    [assumptions]
-  );
   const underwritingInputStyle: CSSProperties = {
     width: 88,
     marginRight: 6
   };
+  const monthlyRate = (assumptions?.mortgageRatePct ?? 0) / 100 / 12;
+  const monthlyRatePct = monthlyRate * 100;
+  const amortizationMonths = (assumptions?.amortizationYears ?? 0) * 12;
+  const predictedMonthlyMortgage =
+    financedAmount <= 0 || amortizationMonths <= 0
+      ? 0
+      : monthlyRate === 0
+        ? financedAmount / amortizationMonths
+        : (() => {
+            const factor = Math.pow(1 + monthlyRate, amortizationMonths);
+            return (financedAmount * monthlyRate * factor) / (factor - 1);
+          })();
+  const predictedMonthlyOperatingCosts =
+    monthlyMaintenance +
+    monthlyManagement +
+    monthlyPropertyTax +
+    (assumptions?.monthlyInsurance ?? 0) +
+    (assumptions?.monthlyUtilities ?? 0) +
+    monthlyStrataFees;
+  const predictedMonthlyCashFlow = effectiveMonthlyRent - (predictedMonthlyMortgage + predictedMonthlyOperatingCosts);
+  const predictedAnnualNoi = (effectiveMonthlyRent - predictedMonthlyOperatingCosts) * 12;
+  const initialCashInvested = downPaymentCost + closingCosts + (assumptions?.rehabBudget ?? 0);
+  const predictedAnnualCashOnCashPct =
+    initialCashInvested > 0 ? ((predictedMonthlyCashFlow * 12) / initialCashInvested) * 100 : 0;
+  const predictedBreakEvenPct =
+    (assumptions?.monthlyRent ?? 0) > 0
+      ? ((predictedMonthlyMortgage + predictedMonthlyOperatingCosts) / (assumptions?.monthlyRent ?? 0)) * 100
+      : 100;
+  const predictedCapRatePct = propertyCost > 0 ? (predictedAnnualNoi / propertyCost) * 100 : 0;
 
   function updateField(key: AssumptionField, value: number): void {
     if (!assumptions) {
@@ -324,34 +355,48 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
       </div>
 
       <div className="card">
-        <h3>Investment indicators</h3>
-        <table className="underwriting-table">
-          <tbody>
-            <tr>
-              <td className="label">Score</td>
-              <td className={`value ${scoreClass}`}>{latest.score.toUpperCase()}</td>
-            </tr>
-            <tr>
-              <td className="label">ROI (cash-on-cash)</td>
-              <td className="value">{formatPct(latest.annualCashOnCashRoiPct)}</td>
-            </tr>
-            <tr>
-              <td className="label">Monthly cash flow</td>
-              <td className="value">{formatCurrency(latest.monthlyCashFlow)}</td>
-            </tr>
-            <tr>
-              <td className="label">Cap rate</td>
-              <td className="value">{formatPct(capRatePct)}</td>
-            </tr>
-          </tbody>
-        </table>
-        {previousRun ? (
-          <p>
-            Since previous run: ROI{" "}
-            {formatPct(latest.annualCashOnCashRoiPct - previousRun.annualCashOnCashRoiPct)} | Cash
-            flow {formatCurrency(latest.monthlyCashFlow - previousRun.monthlyCashFlow)}
-          </p>
-        ) : null}
+        <h3>Investment workspace</h3>
+        <div className="workspace-grid">
+          <div>
+            <table className="underwriting-table">
+              <tbody>
+                <tr>
+                  <td className="label">Score</td>
+                  <td className={`value ${scoreClass}`}>{latest.score.toUpperCase()}</td>
+                </tr>
+                <tr>
+                  <td className="label">ROI (cash-on-cash)</td>
+                  <td className="value">{formatPct(latest.annualCashOnCashRoiPct)}</td>
+                </tr>
+                <tr>
+                  <td className="label">Monthly cash flow</td>
+                  <td className="value">{formatCurrency(latest.monthlyCashFlow)}</td>
+                </tr>
+                <tr>
+                  <td className="label">Cap rate</td>
+                  <td className="value">{formatPct(capRatePct)}</td>
+                </tr>
+              </tbody>
+            </table>
+            {previousRun ? (
+              <p className="workspace-note">
+                Since previous run: ROI{" "}
+                {formatPct(latest.annualCashOnCashRoiPct - previousRun.annualCashOnCashRoiPct)} |
+                Cash flow {formatCurrency(latest.monthlyCashFlow - previousRun.monthlyCashFlow)}
+              </p>
+            ) : null}
+          </div>
+          <div className="workspace-actions">
+            <p className="workspace-note">Edit assumptions in underwriting, then rerun to refresh score.</p>
+            <p>
+              <button onClick={rerunAnalysis} disabled={!canRun}>
+                Rerun analysis
+              </button>
+            </p>
+            <p className="label">Last run</p>
+            <p>{new Date(latest.runAt).toLocaleString()}</p>
+          </div>
+        </div>
       </div>
 
       <div className="card">
@@ -381,7 +426,16 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Estimated closing costs ({assumptions.closingCostsPct}%)</td>
               <td className="value">
-                {formatCurrency(closingCosts)} <SourceHelp field="closingCostsPct" />
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="20"
+                  value={assumptions.closingCostsPct}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("closingCostsPct", Number(event.target.value))}
+                />
+                % ({formatCurrency(closingCosts)}) <SourceHelp field="closingCostsPct" />
               </td>
             </tr>
             <tr>
@@ -418,6 +472,20 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
                 years <SourceHelp field="amortizationYears" />
               </td>
             </tr>
+            <tr>
+              <td className="label">Rehab budget</td>
+              <td className="value">
+                <input
+                  type="number"
+                  step="100"
+                  min="0"
+                  value={assumptions.rehabBudget}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("rehabBudget", Number(event.target.value))}
+                />
+                ({formatCurrency(assumptions.rehabBudget)}) <SourceHelp field="rehabBudget" />
+              </td>
+            </tr>
           </tbody>
         </table>
 
@@ -427,7 +495,17 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Maintenance reserve ({assumptions.maintenancePct}% annual)</td>
               <td className="value">
-                {formatCurrency(monthlyMaintenance)} / month <SourceHelp field="maintenancePct" />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="5"
+                  value={assumptions.maintenancePct}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("maintenancePct", Number(event.target.value))}
+                />
+                % / year ({formatCurrency(monthlyMaintenance)} / month){" "}
+                <SourceHelp field="maintenancePct" />
               </td>
             </tr>
             <tr>
@@ -437,26 +515,61 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Property tax</td>
               <td className="value">
-                {formatCurrency(monthlyPropertyTax)} / month ({annualTaxSourceLabel}){" "}
+                <input
+                  type="number"
+                  step="100"
+                  min="0"
+                  value={assumptions.annualPropertyTax}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("annualPropertyTax", Number(event.target.value))}
+                />
+                / year ({formatCurrency(monthlyPropertyTax)} / month, {annualTaxSourceLabel}){" "}
                 <SourceHelp field="annualPropertyTax" />
               </td>
             </tr>
             <tr>
               <td className="label">Insurance</td>
               <td className="value">
-                {formatCurrency(assumptions.monthlyInsurance)} / month <SourceHelp field="monthlyInsurance" />
+                <input
+                  type="number"
+                  step="10"
+                  min="0"
+                  value={assumptions.monthlyInsurance}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("monthlyInsurance", Number(event.target.value))}
+                />
+                / month ({formatCurrency(assumptions.monthlyInsurance)}){" "}
+                <SourceHelp field="monthlyInsurance" />
               </td>
             </tr>
             <tr>
               <td className="label">Utilities</td>
               <td className="value">
-                {formatCurrency(assumptions.monthlyUtilities)} / month <SourceHelp field="monthlyUtilities" />
+                <input
+                  type="number"
+                  step="10"
+                  min="0"
+                  value={assumptions.monthlyUtilities}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("monthlyUtilities", Number(event.target.value))}
+                />
+                / month ({formatCurrency(assumptions.monthlyUtilities)}){" "}
+                <SourceHelp field="monthlyUtilities" />
               </td>
             </tr>
             <tr>
               <td className="label">Management</td>
               <td className="value">
-                {formatCurrency(monthlyManagement)} / month <SourceHelp field="managementFeePct" />
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="25"
+                  value={assumptions.managementFeePct}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("managementFeePct", Number(event.target.value))}
+                />
+                % ({formatCurrency(monthlyManagement)} / month) <SourceHelp field="managementFeePct" />
               </td>
             </tr>
             <tr>
@@ -476,14 +589,31 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Monthly rent</td>
               <td className="value">
-                {hasRentEstimate ? formatCurrency(assumptions.monthlyRent) : "No data found"}{" "}
+                <input
+                  type="number"
+                  step="50"
+                  min="0"
+                  value={assumptions.monthlyRent}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("monthlyRent", Number(event.target.value))}
+                />
+                / month ({hasRentEstimate ? formatCurrency(assumptions.monthlyRent) : "No data found"}){" "}
                 <SourceHelp field="monthlyRent" />
               </td>
             </tr>
             <tr>
               <td className="label">Vacancy rate</td>
               <td className="value">
-                {formatPct(assumptions.vacancyPct)} <SourceHelp field="vacancyPct" />
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="25"
+                  value={assumptions.vacancyPct}
+                  style={underwritingInputStyle}
+                  onChange={(event) => updateField("vacancyPct", Number(event.target.value))}
+                />
+                % <SourceHelp field="vacancyPct" />
               </td>
             </tr>
             <tr>
@@ -498,27 +628,95 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             </tr>
           </tbody>
         </table>
-      </div>
 
-      <div className="card">
-        <h3>Assumptions and rerun</h3>
-        <div className="grid">
-          {assumptionEntries.map(([key, value]) => (
-            <label key={key}>
-              <div className="label">{key}</div>
-              <input
-                value={value}
-                type="number"
-                onChange={(event) => updateField(key, Number(event.target.value))}
-              />
-            </label>
-          ))}
+        <h4 className="underwriting-subtitle">Equations used</h4>
+        <div className="equation-list">
+          <div className="equation-row">
+            <div className="equation-label">Mortgage payment</div>
+            <div className="equation-expression">
+              Formula: M = P * r * (1 + r)^n / ((1 + r)^n - 1)
+            </div>
+            <div className="equation-expression">
+              Substitution: P = {formatCurrency(financedAmount)}, r = {formatNumber(monthlyRatePct, 4)}%
+              monthly, n = {amortizationMonths}
+            </div>
+            <div className="equation-result">{formatCurrency(predictedMonthlyMortgage)} / month</div>
+          </div>
+          <div className="equation-row">
+            <div className="equation-label">Effective gross income (monthly)</div>
+            <div className="equation-expression">
+              Formula: Effective rent = Monthly rent * (1 - Vacancy%)
+            </div>
+            <div className="equation-expression">
+              Substitution: {formatCurrency(assumptions.monthlyRent)} * (1 -{" "}
+              {formatNumber(assumptions.vacancyPct / 100, 4)})
+            </div>
+            <div className="equation-result">{formatCurrency(effectiveMonthlyRent)} / month</div>
+          </div>
+          <div className="equation-row">
+            <div className="equation-label">Operating expenses (monthly)</div>
+            <div className="equation-expression">
+              Formula: Maintenance + Management + Tax + Insurance + Utilities + Strata
+            </div>
+            <div className="equation-expression">
+              Substitution: {formatCurrency(monthlyMaintenance)} + {formatCurrency(monthlyManagement)} +{" "}
+              {formatCurrency(monthlyPropertyTax)} + {formatCurrency(assumptions.monthlyInsurance)} +{" "}
+              {formatCurrency(assumptions.monthlyUtilities)} + {formatCurrency(monthlyStrataFees)}
+            </div>
+            <div className="equation-result">
+              {formatCurrency(predictedMonthlyOperatingCosts)} / month
+            </div>
+            <div className="equation-note">Note: management uses gross monthly rent before vacancy.</div>
+          </div>
+          <div className="equation-row">
+            <div className="equation-label">Monthly cash flow</div>
+            <div className="equation-expression">
+              Formula: Effective rent - (Mortgage payment + Operating expenses)
+            </div>
+            <div className="equation-expression">
+              Substitution: {formatCurrency(effectiveMonthlyRent)} - ({formatCurrency(predictedMonthlyMortgage)} +{" "}
+              {formatCurrency(predictedMonthlyOperatingCosts)})
+            </div>
+            <div className="equation-result">{formatCurrency(predictedMonthlyCashFlow)} / month</div>
+          </div>
+          <div className="equation-row">
+            <div className="equation-label">Cash-on-cash ROI (annual)</div>
+            <div className="equation-expression">
+              Formula: ((Monthly cash flow * 12) / Initial cash invested) * 100
+            </div>
+            <div className="equation-expression">
+              Substitution: (({formatCurrency(predictedMonthlyCashFlow)} * 12) /{" "}
+              {formatCurrency(initialCashInvested)}) * 100
+            </div>
+            <div className="equation-result">{formatPct(predictedAnnualCashOnCashPct)}</div>
+            <div className="equation-note">
+              Initial cash invested = down payment + closing costs + rehab budget.
+            </div>
+          </div>
+          <div className="equation-row">
+            <div className="equation-label">Cap rate</div>
+            <div className="equation-expression">
+              Formula: (Annual NOI / Property cost) * 100
+            </div>
+            <div className="equation-expression">
+              Substitution: ({formatCurrency(predictedAnnualNoi)} / {formatCurrency(propertyCost)}) * 100
+            </div>
+            <div className="equation-result">{formatPct(predictedCapRatePct)}</div>
+          </div>
+          <div className="equation-row">
+            <div className="equation-label">Break-even occupancy</div>
+            <div className="equation-expression">
+              Formula: ((Mortgage payment + Operating expenses) / Monthly rent) * 100
+            </div>
+            <div className="equation-expression">
+              Substitution: (({formatCurrency(predictedMonthlyMortgage)} +{" "}
+              {formatCurrency(predictedMonthlyOperatingCosts)}) / {formatCurrency(assumptions.monthlyRent)}) *
+              100
+            </div>
+            <div className="equation-result">{formatPct(predictedBreakEvenPct)}</div>
+            <div className="equation-note">Displayed values are rounded for readability.</div>
+          </div>
         </div>
-        <p>
-          <button onClick={rerunAnalysis} disabled={!canRun}>
-            Rerun analysis
-          </button>
-        </p>
       </div>
 
       <div className="card">

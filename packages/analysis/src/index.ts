@@ -58,7 +58,7 @@ export function defaultAssumptionsFor(listing: ListingRecord): ListingAssumption
     annualPropertyTax: listing.taxesAnnual ?? 3500,
     monthlyInsurance: 120,
     monthlyUtilities: 180,
-    managementFeePct: 8,
+    managementFeePct: 0,
     rehabBudget: 10000
   };
 }
