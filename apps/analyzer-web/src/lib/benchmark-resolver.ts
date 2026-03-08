@@ -491,6 +491,61 @@ function fallbackSource(
   );
 }
 
+type RentSourcePreference = "statcan_first" | "cmhc_first";
+
+// Explicit benchmark-source priority rule for rental estimate selection.
+const RENT_SOURCE_PREFERENCE: RentSourcePreference = "statcan_first";
+
+function rentSourceTag(row: RentBenchmarkRow): "statcan" | "cmhc" | "other" {
+  const descriptor = `${row.source_name} ${row.source_publisher}`.toLowerCase();
+  if (descriptor.includes("statistics canada") || descriptor.includes("statcan")) {
+    return "statcan";
+  }
+  if (descriptor.includes("cmhc")) {
+    return "cmhc";
+  }
+  return "other";
+}
+
+function rentSourcePriority(row: RentBenchmarkRow): number {
+  const tag = rentSourceTag(row);
+  if (RENT_SOURCE_PREFERENCE === "statcan_first") {
+    if (tag === "statcan") return 3;
+    if (tag === "cmhc") return 2;
+    return 1;
+  }
+  if (tag === "cmhc") return 3;
+  if (tag === "statcan") return 2;
+  return 1;
+}
+
+function isRentDirectMatch(params: {
+  row: RentBenchmarkRow;
+  propertyClass: string;
+  beds: number;
+  sqftBand: string;
+  yearBand?: string;
+}): boolean {
+  const { row, propertyClass, beds, sqftBand, yearBand } = params;
+  if (row.property_type !== propertyClass || row.bedrooms !== beds) {
+    return false;
+  }
+
+  // StatCan rows do not carry reliable sqft/year-built segmentation in our current feeds.
+  if (rentSourceTag(row) === "statcan") {
+    return true;
+  }
+
+  if (row.sqft_band !== sqftBand) {
+    return false;
+  }
+
+  if (!yearBand) {
+    return true;
+  }
+  return row.year_built_band === yearBand || row.year_built_band === null;
+}
+
 export function pickBestRentRow(
   rows: RentBenchmarkRow[],
   propertyClass: string,
@@ -498,13 +553,15 @@ export function pickBestRentRow(
   sqftBand: string,
   yearBand?: string
 ): { row: RentBenchmarkRow | null; method: AssumptionEstimateMethod; confidence: number } {
-  const ordered = rows.slice().sort((a, b) => b.period.localeCompare(a.period));
+  const ordered = rows.slice().sort((a, b) => {
+    const sourceSort = rentSourcePriority(b) - rentSourcePriority(a);
+    if (sourceSort !== 0) {
+      return sourceSort;
+    }
+    return b.period.localeCompare(a.period);
+  });
   const direct = ordered.find(
-    (row) =>
-      row.property_type === propertyClass &&
-      row.bedrooms === beds &&
-      row.sqft_band === sqftBand &&
-      (yearBand ? row.year_built_band === yearBand || row.year_built_band === null : true)
+    (row) => isRentDirectMatch({ row, propertyClass, beds, sqftBand, yearBand })
   );
   if (direct) return { row: direct, method: "direct_match", confidence: 0.95 };
 

@@ -6,6 +6,7 @@ import {
   mapListingRowToRecord,
   mapRecordToListingInsert
 } from "@/lib/db-mappers";
+import { getRequestIp, isApiSecretAuthorized, isRateLimited } from "@/lib/api-security";
 import { resolveBenchmarkAssumptions } from "@/lib/benchmark-resolver";
 import { parseIncomingListing } from "@/lib/ingest";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
@@ -49,6 +50,13 @@ export async function POST(request: Request) {
   const requestId = `ingest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date().toISOString();
   const startedMs = performance.now();
+  if (!isApiSecretAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 });
+  }
+  const ip = getRequestIp(request);
+  if (isRateLimited({ key: `ingest:${ip}`, maxRequests: 40, windowMs: 60_000 })) {
+    return NextResponse.json({ error: "Too many requests", requestId }, { status: 429 });
+  }
   const timingsMs: Record<string, number> = {};
   const stepEvents: Array<{
     step: string;
@@ -268,7 +276,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(
       {
-        error: listingError?.message ?? "Could not save listing",
+        error: "Could not save listing",
         requestId,
         startedAt,
         endedAt,
@@ -331,7 +339,7 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(
       {
-        error: runError?.message ?? "Could not save analysis run",
+        error: "Could not save analysis run",
         requestId,
         startedAt,
         endedAt,

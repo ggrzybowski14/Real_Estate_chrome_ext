@@ -118,6 +118,119 @@ test("pickBestRentRow prioritizes direct then bucket fallback", () => {
   assert.ok(bucket.row);
 });
 
+test("pickBestRentRow prefers StatCan source over CMHC for same period", () => {
+  const rows = [
+    {
+      region_code: "ca-on-gta",
+      region_label: "Greater Toronto Area, ON",
+      property_type: "apartment",
+      bedrooms: 2,
+      sqft_band: "900_1199",
+      year_built_band: null,
+      period: "2025-Q1",
+      median_rent: 3200,
+      source_name: "CMHC Rental Market Report",
+      source_publisher: "CMHC",
+      source_url: "https://example.com/cmhc",
+      source_fetched_at: "2025-01-01T00:00:00.000Z"
+    },
+    {
+      region_code: "ca-on-gta",
+      region_label: "Greater Toronto Area, ON",
+      property_type: "apartment",
+      bedrooms: 2,
+      sqft_band: "900_1199",
+      year_built_band: null,
+      period: "2025-Q1",
+      median_rent: 3300,
+      source_name: "StatCan Quarterly Rent Statistics",
+      source_publisher: "Statistics Canada",
+      source_url: "https://example.com/statcan",
+      source_fetched_at: "2025-01-01T00:00:00.000Z"
+    }
+  ];
+
+  const result = pickBestRentRow(rows, "apartment", 2, "900_1199");
+  assert.equal(result.method, "direct_match");
+  assert.equal(result.row?.source_name, "StatCan Quarterly Rent Statistics");
+  assert.equal(result.row?.median_rent, 3300);
+});
+
+test("pickBestRentRow ignores sqft/year filters for StatCan rows", () => {
+  const rows = [
+    {
+      region_code: "ca-bc-victoria",
+      region_label: "Greater Victoria, BC",
+      property_type: "apartment",
+      bedrooms: 2,
+      sqft_band: "900_1199",
+      year_built_band: "2000_2014",
+      period: "2025-Q1",
+      median_rent: 2400,
+      source_name: "CMHC Rental Market Report",
+      source_publisher: "CMHC",
+      source_url: "https://example.com/cmhc",
+      source_fetched_at: "2025-01-01T00:00:00.000Z"
+    },
+    {
+      region_code: "ca-bc-victoria",
+      region_label: "Greater Victoria, BC",
+      property_type: "apartment",
+      bedrooms: 2,
+      sqft_band: "unknown",
+      year_built_band: null,
+      period: "2025-Q1",
+      median_rent: 2500,
+      source_name: "StatCan Quarterly Rent Statistics",
+      source_publisher: "Statistics Canada",
+      source_url: "https://example.com/statcan",
+      source_fetched_at: "2025-01-01T00:00:00.000Z"
+    }
+  ];
+
+  const result = pickBestRentRow(rows, "apartment", 2, "900_1199", "2015_plus");
+  assert.equal(result.method, "direct_match");
+  assert.equal(result.row?.source_name, "StatCan Quarterly Rent Statistics");
+  assert.equal(result.row?.median_rent, 2500);
+});
+
+test("pickBestRentRow prioritizes StatCan even when CMHC period is newer", () => {
+  const rows = [
+    {
+      region_code: "ca-on-gta",
+      region_label: "Greater Toronto Area, ON",
+      property_type: "apartment",
+      bedrooms: 2,
+      sqft_band: "900_1199",
+      year_built_band: null,
+      period: "2025-Q2",
+      median_rent: 3400,
+      source_name: "CMHC Rental Market Report",
+      source_publisher: "CMHC",
+      source_url: "https://example.com/cmhc",
+      source_fetched_at: "2025-01-01T00:00:00.000Z"
+    },
+    {
+      region_code: "ca-on-gta",
+      region_label: "Greater Toronto Area, ON",
+      property_type: "apartment",
+      bedrooms: 2,
+      sqft_band: "unknown",
+      year_built_band: null,
+      period: "2025-Q1",
+      median_rent: 3300,
+      source_name: "StatCan Quarterly Rent Statistics",
+      source_publisher: "Statistics Canada",
+      source_url: "https://example.com/statcan",
+      source_fetched_at: "2025-01-01T00:00:00.000Z"
+    }
+  ];
+
+  const result = pickBestRentRow(rows, "apartment", 2, "900_1199");
+  assert.equal(result.method, "direct_match");
+  assert.equal(result.row?.source_name, "StatCan Quarterly Rent Statistics");
+});
+
 test("pickBestRentRow returns no data when bedroom bucket has no match", () => {
   const rows = [
     {

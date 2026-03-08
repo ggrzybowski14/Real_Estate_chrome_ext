@@ -1,23 +1,17 @@
 import { NextResponse } from "next/server";
 import { refreshStatcanBenchmarks } from "@/lib/benchmarks/refresh-statcan";
+import { getRequestIp, isApiSecretAuthorized, isRateLimited } from "@/lib/api-security";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function isAuthorized(request: Request): boolean {
-  const secret = process.env.BENCHMARK_REFRESH_SECRET;
-  if (!secret) {
-    return false;
-  }
-  const header = request.headers.get("x-benchmark-refresh-secret");
-  const auth = request.headers.get("authorization");
-  const token = auth?.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
-  return header === secret || token === secret;
-}
-
 export async function POST(request: Request) {
-  if (!isAuthorized(request)) {
+  if (!isApiSecretAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const ip = getRequestIp(request);
+  if (isRateLimited({ key: `benchmarks-refresh:${ip}`, maxRequests: 8, windowMs: 60_000 })) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
   }
 
   const body = await request.json().catch(() => ({}));
@@ -28,8 +22,9 @@ export async function POST(request: Request) {
     const summary = await refreshStatcanBenchmarks({ dryRun, replaceExisting });
     return NextResponse.json({ ok: true, summary });
   } catch (error) {
+    console.error("[benchmarks.refresh] failed", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Benchmark refresh failed" },
+      { error: "Benchmark refresh failed" },
       { status: 500 }
     );
   }

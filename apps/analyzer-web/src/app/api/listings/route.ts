@@ -26,8 +26,11 @@ export async function GET() {
     .limit(300);
 
   if (listingError || !allListings) {
+    if (listingError) {
+      console.error("[listings.get] listing fetch failed", listingError);
+    }
     return NextResponse.json(
-      { error: listingError?.message ?? "Could not fetch listings" },
+      { error: "Could not fetch listings" },
       { status: 500 }
     );
   }
@@ -54,8 +57,11 @@ export async function GET() {
     .order("run_at", { ascending: false });
 
   if (runError || !runs) {
+    if (runError) {
+      console.error("[listings.get] analysis fetch failed", runError);
+    }
     return NextResponse.json(
-      { error: runError?.message ?? "Could not fetch analysis runs" },
+      { error: "Could not fetch analysis runs" },
       { status: 500 }
     );
   }

@@ -7,6 +7,7 @@ import {
   mapAnalysisToInsert,
   mapListingRowToRecord
 } from "@/lib/db-mappers";
+import { getRequestIp, isApiSecretAuthorized, isRateLimited } from "@/lib/api-security";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 function toNumber(value: unknown): number {
@@ -61,6 +62,14 @@ export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
+  if (!isApiSecretAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const ip = getRequestIp(request);
+  if (isRateLimited({ key: `rerun:${ip}`, maxRequests: 50, windowMs: 60_000 })) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
+
   const body = await request.json().catch(() => null);
   const assumptions = parseAssumptions(body?.assumptions);
   const assumptionSources = parseAssumptionSources(body?.assumptionSources);
@@ -87,7 +96,8 @@ export async function POST(
   const { error: insertError } = await supabase.from("analysis_runs").insert(mapAnalysisToInsert(analysis));
 
   if (insertError) {
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+    console.error("[listings.rerun] insert failed", insertError);
+    return NextResponse.json({ error: "Could not save analysis run" }, { status: 500 });
   }
 
   const { data: runs, error: runError } = await supabase
@@ -97,8 +107,11 @@ export async function POST(
     .order("run_at", { ascending: false });
 
   if (runError || !runs) {
+    if (runError) {
+      console.error("[listings.rerun] fetch runs failed", runError);
+    }
     return NextResponse.json(
-      { error: runError?.message ?? "Could not fetch updated runs" },
+      { error: "Could not fetch updated runs" },
       { status: 500 }
     );
   }

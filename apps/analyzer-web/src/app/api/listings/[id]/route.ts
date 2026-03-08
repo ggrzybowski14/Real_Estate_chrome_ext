@@ -30,8 +30,11 @@ export async function GET(
     .order("run_at", { ascending: false });
 
   if (runError || !runs) {
+    if (runError) {
+      console.error("[listings.id.get] analysis fetch failed", runError);
+    }
     return NextResponse.json(
-      { error: runError?.message ?? "Could not fetch runs" },
+      { error: "Could not fetch runs" },
       { status: 500 }
     );
   }
