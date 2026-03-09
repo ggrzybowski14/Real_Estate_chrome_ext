@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import type {
   AssumptionField,
   AssumptionSourceDetail,
@@ -111,10 +111,6 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
       ? "from listing"
       : "from data pulled"
     : "from data pulled";
-  const underwritingInputStyle: CSSProperties = {
-    width: 88,
-    marginRight: 6
-  };
   const monthlyRate = (assumptions?.mortgageRatePct ?? 0) / 100 / 12;
   const monthlyRatePct = monthlyRate * 100;
   const amortizationMonths = (assumptions?.amortizationYears ?? 0) * 12;
@@ -411,31 +407,43 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Down payment ({assumptions.downPaymentPct}%)</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="100"
-                  value={assumptions.downPaymentPct}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("downPaymentPct", Number(event.target.value))}
-                />
-                % ({formatCurrency(downPaymentCost)}) <SourceHelp field="downPaymentPct" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    value={assumptions.downPaymentPct}
+                    onChange={(event) => updateField("downPaymentPct", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">%</span>
+                  <span className="underwriting-derived">({formatCurrency(downPaymentCost)})</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="downPaymentPct" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
               <td className="label">Estimated closing costs ({assumptions.closingCostsPct}%)</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="20"
-                  value={assumptions.closingCostsPct}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("closingCostsPct", Number(event.target.value))}
-                />
-                % ({formatCurrency(closingCosts)}) <SourceHelp field="closingCostsPct" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="20"
+                    value={assumptions.closingCostsPct}
+                    onChange={(event) => updateField("closingCostsPct", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">%</span>
+                  <span className="underwriting-derived">({formatCurrency(closingCosts)})</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="closingCostsPct" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
@@ -445,45 +453,63 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Mortgage rate</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="25"
-                  value={assumptions.mortgageRatePct}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("mortgageRatePct", Number(event.target.value))}
-                />
-                % <SourceHelp field="mortgageRatePct" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="25"
+                    value={assumptions.mortgageRatePct}
+                    onChange={(event) => updateField("mortgageRatePct", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">%</span>
+                  <span className="underwriting-derived underwriting-derived-empty">--</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="mortgageRatePct" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
               <td className="label">Amortization</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="1"
-                  min="1"
-                  max="50"
-                  value={assumptions.amortizationYears}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("amortizationYears", Number(event.target.value))}
-                />
-                years <SourceHelp field="amortizationYears" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="1"
+                    min="1"
+                    max="50"
+                    value={assumptions.amortizationYears}
+                    onChange={(event) => updateField("amortizationYears", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">years</span>
+                  <span className="underwriting-derived underwriting-derived-empty">--</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="amortizationYears" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
               <td className="label">Rehab budget</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="100"
-                  min="0"
-                  value={assumptions.rehabBudget}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("rehabBudget", Number(event.target.value))}
-                />
-                ({formatCurrency(assumptions.rehabBudget)}) <SourceHelp field="rehabBudget" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="100"
+                    min="0"
+                    value={assumptions.rehabBudget}
+                    onChange={(event) => updateField("rehabBudget", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit underwriting-derived-empty">--</span>
+                  <span className="underwriting-derived">({formatCurrency(assumptions.rehabBudget)})</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="rehabBudget" />
+                  </span>
+                </span>
               </td>
             </tr>
           </tbody>
@@ -495,17 +521,22 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Maintenance reserve ({assumptions.maintenancePct}% annual)</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="5"
-                  value={assumptions.maintenancePct}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("maintenancePct", Number(event.target.value))}
-                />
-                % / year ({formatCurrency(monthlyMaintenance)} / month){" "}
-                <SourceHelp field="maintenancePct" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="5"
+                    value={assumptions.maintenancePct}
+                    onChange={(event) => updateField("maintenancePct", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">% / year</span>
+                  <span className="underwriting-derived">({formatCurrency(monthlyMaintenance)} / month)</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="maintenancePct" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
@@ -515,61 +546,84 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Property tax</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="100"
-                  min="0"
-                  value={assumptions.annualPropertyTax}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("annualPropertyTax", Number(event.target.value))}
-                />
-                / year ({formatCurrency(monthlyPropertyTax)} / month, {annualTaxSourceLabel}){" "}
-                <SourceHelp field="annualPropertyTax" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="100"
+                    min="0"
+                    value={assumptions.annualPropertyTax}
+                    onChange={(event) => updateField("annualPropertyTax", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">/ year</span>
+                  <span className="underwriting-derived">
+                    ({formatCurrency(monthlyPropertyTax)} / month, {annualTaxSourceLabel})
+                  </span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="annualPropertyTax" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
               <td className="label">Insurance</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="10"
-                  min="0"
-                  value={assumptions.monthlyInsurance}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("monthlyInsurance", Number(event.target.value))}
-                />
-                / month ({formatCurrency(assumptions.monthlyInsurance)}){" "}
-                <SourceHelp field="monthlyInsurance" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="10"
+                    min="0"
+                    value={assumptions.monthlyInsurance}
+                    onChange={(event) => updateField("monthlyInsurance", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">/ month</span>
+                  <span className="underwriting-derived">({formatCurrency(assumptions.monthlyInsurance)})</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="monthlyInsurance" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
               <td className="label">Utilities</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="10"
-                  min="0"
-                  value={assumptions.monthlyUtilities}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("monthlyUtilities", Number(event.target.value))}
-                />
-                / month ({formatCurrency(assumptions.monthlyUtilities)}){" "}
-                <SourceHelp field="monthlyUtilities" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="10"
+                    min="0"
+                    value={assumptions.monthlyUtilities}
+                    onChange={(event) => updateField("monthlyUtilities", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">/ month</span>
+                  <span className="underwriting-derived">({formatCurrency(assumptions.monthlyUtilities)})</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="monthlyUtilities" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
               <td className="label">Management</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="25"
-                  value={assumptions.managementFeePct}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("managementFeePct", Number(event.target.value))}
-                />
-                % ({formatCurrency(monthlyManagement)} / month) <SourceHelp field="managementFeePct" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="25"
+                    value={assumptions.managementFeePct}
+                    onChange={(event) => updateField("managementFeePct", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">%</span>
+                  <span className="underwriting-derived">({formatCurrency(monthlyManagement)} / month)</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="managementFeePct" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
@@ -589,31 +643,44 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             <tr>
               <td className="label">Monthly rent</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="50"
-                  min="0"
-                  value={assumptions.monthlyRent}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("monthlyRent", Number(event.target.value))}
-                />
-                / month ({hasRentEstimate ? formatCurrency(assumptions.monthlyRent) : "No data found"}){" "}
-                <SourceHelp field="monthlyRent" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="50"
+                    min="0"
+                    value={assumptions.monthlyRent}
+                    onChange={(event) => updateField("monthlyRent", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">/ month</span>
+                  <span className="underwriting-derived">
+                    ({hasRentEstimate ? formatCurrency(assumptions.monthlyRent) : "No data found"})
+                  </span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="monthlyRent" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>
               <td className="label">Vacancy rate</td>
               <td className="value">
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="25"
-                  value={assumptions.vacancyPct}
-                  style={underwritingInputStyle}
-                  onChange={(event) => updateField("vacancyPct", Number(event.target.value))}
-                />
-                % <SourceHelp field="vacancyPct" />
+                <span className="underwriting-edit-line">
+                  <input
+                    className="underwriting-input"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="25"
+                    value={assumptions.vacancyPct}
+                    onChange={(event) => updateField("vacancyPct", Number(event.target.value))}
+                  />
+                  <span className="underwriting-unit">%</span>
+                  <span className="underwriting-derived underwriting-derived-empty">--</span>
+                  <span className="underwriting-source-slot">
+                    <SourceHelp field="vacancyPct" />
+                  </span>
+                </span>
               </td>
             </tr>
             <tr>

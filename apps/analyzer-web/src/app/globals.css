@@ -74,7 +74,7 @@ main {
 }
 
 .underwriting-table tbody tr td {
-  padding: 8px 0;
+  padding: 6px 0;
   border-bottom: 1px solid #262c36;
   vertical-align: middle;
 }
@@ -84,7 +84,7 @@ main {
 }
 
 .underwriting-table td.label {
-  width: 68%;
+  width: 62%;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -92,10 +92,56 @@ main {
 }
 
 .underwriting-table td.value {
-  width: 32%;
+  width: 38%;
   text-align: right;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 650;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+.underwriting-edit-line {
+  display: inline-grid;
+  grid-template-columns: 84px 64px 170px 20px;
+  align-items: center;
+  justify-content: end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.underwriting-input {
+  width: 84px;
+  min-width: 84px;
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+.underwriting-unit {
+  color: #dce5f4;
+  display: inline-block;
+  width: 64px;
+  text-align: left;
+}
+
+.underwriting-derived {
+  color: #c0cbdd;
+  display: inline-block;
+  width: 170px;
+  text-align: right;
+  font-size: 13px;
+}
+
+.underwriting-derived-empty {
+  opacity: 0.35;
+}
+
+.underwriting-source-slot {
+  width: 20px;
+  display: inline-flex;
+  justify-content: center;
 }
 
 .workspace-grid {
@@ -167,8 +213,10 @@ main {
 .source-help-wrap {
   position: relative;
   display: inline-flex;
-  margin-left: 6px;
+  margin-left: 0;
   vertical-align: middle;
+  width: 20px;
+  justify-content: center;
 }
 
 .source-help {
@@ -198,7 +246,34 @@ main {
   background: #2a2f3a;
   color: #7d899c;
   border: 1px solid #3a4354;
-  margin-left: 6px;
+  margin-left: 0;
+}
+
+@media (max-width: 980px) {
+  .underwriting-table td.label {
+    width: 58%;
+  }
+
+  .underwriting-table td.value {
+    width: 42%;
+  }
+
+  .underwriting-input {
+    width: 78px;
+    min-width: 78px;
+  }
+
+  .underwriting-unit {
+    min-width: 50px;
+  }
+
+  .underwriting-derived {
+    min-width: 120px;
+  }
+
+  .underwriting-edit-line {
+    grid-template-columns: 78px 50px 120px 20px;
+  }
 }
 
 .source-help-popover {

@@ -7,7 +7,7 @@ import {
   mapAnalysisToInsert,
   mapListingRowToRecord
 } from "@/lib/db-mappers";
-import { getRequestIp, isApiSecretAuthorized, isRateLimited } from "@/lib/api-security";
+import { getRequestIp, isRateLimited } from "@/lib/api-security";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 function toNumber(value: unknown): number {
@@ -62,9 +62,6 @@ export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
-  if (!isApiSecretAuthorized(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
   const ip = getRequestIp(request);
   if (isRateLimited({ key: `rerun:${ip}`, maxRequests: 50, windowMs: 60_000 })) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 });

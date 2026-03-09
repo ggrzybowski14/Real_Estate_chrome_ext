@@ -6,7 +6,7 @@ import {
   mapListingRowToRecord,
   mapRecordToListingInsert
 } from "@/lib/db-mappers";
-import { getRequestIp, isApiSecretAuthorized, isRateLimited } from "@/lib/api-security";
+import { getRequestIp, isRateLimited } from "@/lib/api-security";
 import { resolveBenchmarkAssumptions } from "@/lib/benchmark-resolver";
 import { parseIncomingListing } from "@/lib/ingest";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
@@ -50,9 +50,6 @@ export async function POST(request: Request) {
   const requestId = `ingest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date().toISOString();
   const startedMs = performance.now();
-  if (!isApiSecretAuthorized(request)) {
-    return NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 });
-  }
   const ip = getRequestIp(request);
   if (isRateLimited({ key: `ingest:${ip}`, maxRequests: 40, windowMs: 60_000 })) {
     return NextResponse.json({ error: "Too many requests", requestId }, { status: 429 });
