@@ -267,6 +267,9 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
           Open source listing
         </a>
       </p>
+      <p>
+        <Link href="/">Back to listings</Link>
+      </p>
       {error ? <div className="card">{error}</div> : null}
 
       <div className="card">
@@ -795,9 +798,6 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
         ))}
       </div>
 
-      <p>
-        <Link href="/">Back to listings</Link>
-      </p>
     </main>
   );
 }

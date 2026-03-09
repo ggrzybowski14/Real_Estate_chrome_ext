@@ -59,7 +59,7 @@ export function defaultAssumptionsFor(listing: ListingRecord): ListingAssumption
     monthlyInsurance: 120,
     monthlyUtilities: 180,
     managementFeePct: 0,
-    rehabBudget: 10000
+    rehabBudget: 0
   };
 }
 
