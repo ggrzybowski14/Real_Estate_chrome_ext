@@ -13,6 +13,21 @@ import { formatCurrency, formatPct } from "@/lib/format";
 import { getListingDisplayData } from "@/lib/listing-display";
 import type { StoredListing } from "@/lib/types";
 
+type RentEstimateResponse = {
+  ok: boolean;
+  estimate?: {
+    monthlyRent: number;
+    lowRent: number;
+    highRent: number;
+    confidence: number;
+    noRentMatch: boolean;
+    method: AssumptionSourceDetail["method"];
+    assumptionSource: AssumptionSourceDetail;
+    consideredComparables?: number[];
+  };
+  error?: string;
+};
+
 function formatNumber(value: number, digits = 2): string {
   return Number.isFinite(value)
     ? value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
@@ -25,6 +40,9 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
   const [assumptionSources, setAssumptionSources] = useState<AssumptionSources>({});
   const [benchmarkContext, setBenchmarkContext] = useState<BenchmarkContext | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [estimateLoading, setEstimateLoading] = useState(false);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+  const [rentEstimate, setRentEstimate] = useState<RentEstimateResponse["estimate"] | null>(null);
 
   function buildScrapedTaxSource(value: number, url: string, capturedAt: string): AssumptionSourceDetail {
     return {
@@ -195,6 +213,61 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
         setBenchmarkContext(next.latestAnalysis.benchmarkContext);
       })
       .catch(() => setError("Could not rerun analysis"));
+  }
+
+  function searchRentEstimate(): void {
+    if (!stored) {
+      return;
+    }
+    setEstimateLoading(true);
+    setError(null);
+    void fetch(`/api/listings/${stored.listing.id}/rent-estimate`, { method: "POST" })
+      .then((res) => res.json())
+      .then((data: RentEstimateResponse) => {
+        if (data?.error || !data.estimate) {
+          setError(data?.error ?? "Could not estimate rent");
+          return;
+        }
+        setRentEstimate(data.estimate);
+      })
+      .catch(() => setError("Could not estimate rent"))
+      .finally(() => setEstimateLoading(false));
+  }
+
+  function searchRentalsCaFallback(): void {
+    if (!stored) {
+      return;
+    }
+    setFallbackLoading(true);
+    setError(null);
+    void fetch(`/api/listings/${stored.listing.id}/rent-estimate-fallback`, { method: "POST" })
+      .then((res) => res.json())
+      .then((data: RentEstimateResponse) => {
+        if (data?.error || !data.estimate) {
+          setError(data?.error ?? "Could not fetch Rentals.ca fallback estimate");
+          return;
+        }
+        setRentEstimate(data.estimate);
+        if (data.estimate.noRentMatch) {
+          setError(
+            data.estimate.assumptionSource.notes ??
+              "No Rentals.ca fallback matches found for this listing."
+          );
+        }
+      })
+      .catch(() => setError("Could not fetch Rentals.ca fallback estimate"))
+      .finally(() => setFallbackLoading(false));
+  }
+
+  function applyRentEstimate(): void {
+    if (!rentEstimate) {
+      return;
+    }
+    updateField("monthlyRent", rentEstimate.monthlyRent);
+    setAssumptionSources((previous) => ({
+      ...previous,
+      monthlyRent: rentEstimate.assumptionSource
+    }));
   }
 
   function sourceFor(field: AssumptionField): AssumptionSourceDetail | undefined {
@@ -392,6 +465,37 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
                 Rerun analysis
               </button>
             </p>
+            {!hasRentEstimate ? (
+              <>
+                <p>
+                  <button onClick={searchRentEstimate} disabled={estimateLoading || !stored}>
+                    {estimateLoading ? "Searching..." : "Search / Estimate Rent"}
+                  </button>
+                </p>
+                <p>
+                  <button onClick={searchRentalsCaFallback} disabled={fallbackLoading || !stored}>
+                    {fallbackLoading ? "Searching Rentals.ca..." : "Search Rentals.ca Fallback"}
+                  </button>
+                </p>
+              </>
+            ) : null}
+            {rentEstimate ? (
+              <div>
+                <p className="workspace-note">
+                  Suggested rent: {formatCurrency(rentEstimate.monthlyRent)} / month (range{" "}
+                  {formatCurrency(rentEstimate.lowRent)} - {formatCurrency(rentEstimate.highRent)}, confidence{" "}
+                  {Math.round(rentEstimate.confidence * 100)}%)
+                </p>
+                {rentEstimate.consideredComparables && rentEstimate.consideredComparables.length > 0 ? (
+                  <p className="workspace-note">
+                    Rentals.ca comparables found: {rentEstimate.consideredComparables.length}
+                  </p>
+                ) : null}
+                <p>
+                  <button onClick={applyRentEstimate}>Apply estimate</button>
+                </p>
+              </div>
+            ) : null}
             <p className="label">Last run</p>
             <p>{new Date(latest.runAt).toLocaleString()}</p>
           </div>
