@@ -53,11 +53,31 @@ function cityFromListing(listing: ListingRecord): string {
   const cityFromRaw = typeof location.city === "string" ? location.city.trim() : "";
   if (cityFromRaw) return cityFromRaw;
 
-  const address = listing.address ?? "";
-  const parts = address.split(",").map((part) => part.trim()).filter(Boolean);
+  const normalizedAddress = (listing.address ?? "")
+    .replace(/\s+/gu, " ")
+    .replace(
+      /([a-z])([A-Z][a-z.'-]+,\s*(?:British Columbia|Alberta|Ontario|Quebec|Nova Scotia|New Brunswick|Manitoba|Saskatchewan|PEI|Prince Edward Island|Newfoundland and Labrador))/gu,
+      "$1, $2"
+    )
+    .trim();
+  const parts = normalizedAddress.split(",").map((part) => part.trim()).filter(Boolean);
   if (parts.length >= 2) {
     return parts[1];
   }
+
+  const provinceMatch = normalizedAddress.match(
+    /(British Columbia|Alberta|Ontario|Quebec|Nova Scotia|New Brunswick|Manitoba|Saskatchewan|Prince Edward Island|Newfoundland and Labrador)/iu
+  );
+  if (provinceMatch?.index && provinceMatch.index > 0) {
+    const beforeProvince = normalizedAddress.slice(0, provinceMatch.index).replace(/,\s*$/u, "");
+    const spaced = beforeProvince.replace(/([a-z])([A-Z])/gu, "$1 $2");
+    const tokens = spaced.trim().split(/\s+/u).filter(Boolean);
+    const maybeCity = tokens[tokens.length - 1];
+    if (maybeCity) {
+      return maybeCity;
+    }
+  }
+
   return "canada";
 }
 

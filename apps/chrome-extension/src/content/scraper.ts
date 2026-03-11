@@ -18,6 +18,8 @@ interface LocationSnapshot {
 }
 
 const GENERIC_TYPES = new Set(["product", "offer", "thing", "residence"]);
+const CANADIAN_PROVINCE_PATTERN =
+  "British Columbia|Alberta|Ontario|Quebec|Nova Scotia|New Brunswick|Manitoba|Saskatchewan|PEI|Prince Edward Island|Newfoundland and Labrador";
 
 export interface ScrapedListingPayload {
   source: "realtor.ca";
@@ -335,7 +337,9 @@ function parseLocation(address?: string): LocationSnapshot | undefined {
   const street = parts[0];
   const city = parts[1];
   const provincePostal = parts[2] ?? "";
-  const provinceMatch = provincePostal.match(/\b([A-Z]{2}|British Columbia|Alberta|Ontario|Quebec|Nova Scotia|New Brunswick|Manitoba|Saskatchewan|PEI|Prince Edward Island|Newfoundland and Labrador)\b/i);
+  const provinceMatch = provincePostal.match(
+    new RegExp(`\\b([A-Z]{2}|${CANADIAN_PROVINCE_PATTERN})\\b`, "i")
+  );
   const postalMatch = provincePostal.match(/[A-Z]\d[A-Z]\s?\d[A-Z]\d/i);
   return {
     street,
@@ -346,15 +350,31 @@ function parseLocation(address?: string): LocationSnapshot | undefined {
   };
 }
 
+function normalizeAddress(value?: string): string | undefined {
+  if (!value) return undefined;
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return undefined;
+
+  // Some Realtor pages collapse street + city (e.g. "Brae RdDuncan, British Columbia V9L3T8").
+  // Insert separator before the city token when province segment is present.
+  const withStreetCityBreak = compact.replace(
+    new RegExp(`([a-z])([A-Z][a-z.'-]+,\\s*(?:${CANADIAN_PROVINCE_PATTERN}))`, "g"),
+    "$1, $2"
+  );
+
+  return withStreetCityBreak;
+}
+
 export function parseListingPayload(source: ScrapeSource): ScrapedListingPayload {
   const url = source.url;
   const sourceListingId = url.match(/\/(\d+)(?:$|[/?#])/u)?.[1];
 
-  const address =
+  const rawAddress =
     source.data?.address ||
     source.h1Text ||
     fromJsonLd(source.jsonLdObjects, "name") ||
     source.meta?.["og:title"];
+  const address = normalizeAddress(rawAddress);
   const description =
     source.data?.description ||
     fromJsonLd(source.jsonLdObjects, "description") ||

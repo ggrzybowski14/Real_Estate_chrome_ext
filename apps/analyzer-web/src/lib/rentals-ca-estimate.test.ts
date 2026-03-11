@@ -42,6 +42,16 @@ test("buildRentalsCaSearchUrl includes city and basic filters", () => {
   assert.ok(url.includes("regionCode=ca-bc-victoria"));
 });
 
+test("buildRentalsCaSearchUrl repairs collapsed street-city addresses", () => {
+  const url = buildRentalsCaSearchUrl(
+    sampleListing({
+      address: "204 330 Brae RdDuncan, British Columbia V9L3T8",
+      rawSnapshot: {}
+    })
+  );
+  assert.ok(url.startsWith("https://rentals.ca/duncan"));
+});
+
 test("extractRentValuesFromHtml parses dollar and json price values", () => {
   const html = `
     <div>$2,350 / month</div>

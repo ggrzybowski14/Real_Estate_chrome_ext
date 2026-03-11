@@ -238,25 +238,63 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
     if (!stored) {
       return;
     }
+    const startedAt = Date.now();
+    let outcome: "success" | "no_match" | "api_error" | "request_error" = "request_error";
+    let resultMeta: Record<string, unknown> = {};
+    console.log("[rent-fallback:start]", {
+      listingId: stored.listing.id,
+      address: stored.listing.address ?? "unknown",
+      sqft: stored.listing.sqft ?? null,
+      beds: stored.listing.beds ?? null
+    });
     setFallbackLoading(true);
     setError(null);
     void fetch(`/api/listings/${stored.listing.id}/rent-estimate-fallback`, { method: "POST" })
       .then((res) => res.json())
       .then((data: RentEstimateResponse) => {
         if (data?.error || !data.estimate) {
+          outcome = "api_error";
+          resultMeta = { error: data?.error ?? "missing estimate payload" };
           setError(data?.error ?? "Could not fetch Rentals.ca fallback estimate");
           return;
         }
         setRentEstimate(data.estimate);
         if (data.estimate.noRentMatch) {
+          outcome = "no_match";
+          resultMeta = {
+            method: data.estimate.method,
+            note: data.estimate.assumptionSource?.notes ?? "",
+            comparables: data.estimate.consideredComparables?.length ?? 0
+          };
           setError(
             data.estimate.assumptionSource.notes ??
               "No Rentals.ca fallback matches found for this listing."
           );
+        } else {
+          outcome = "success";
+          resultMeta = {
+            method: data.estimate.method,
+            monthlyRent: data.estimate.monthlyRent,
+            lowRent: data.estimate.lowRent,
+            highRent: data.estimate.highRent,
+            comparables: data.estimate.consideredComparables?.length ?? 0
+          };
         }
       })
-      .catch(() => setError("Could not fetch Rentals.ca fallback estimate"))
-      .finally(() => setFallbackLoading(false));
+      .catch(() => {
+        outcome = "request_error";
+        resultMeta = { error: "network/request failure" };
+        setError("Could not fetch Rentals.ca fallback estimate");
+      })
+      .finally(() => {
+        console.log("[rent-fallback:result]", {
+          listingId: stored.listing.id,
+          outcome,
+          durationMs: Date.now() - startedAt,
+          ...resultMeta
+        });
+        setFallbackLoading(false);
+      });
   }
 
   function applyRentEstimate(): void {

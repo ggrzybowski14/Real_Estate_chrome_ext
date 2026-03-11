@@ -116,3 +116,16 @@ test("extracts annual property taxes from body text", () => {
 
   assert.equal(payload.taxesAnnual, 3782);
 });
+
+test("normalizes missing street-city separator in scraped address", () => {
+  const payload = parseListingPayload({
+    url: "https://www.realtor.ca/real-estate/55555555/test",
+    h1Text: "204 330 Brae RdDuncan, British Columbia V9L3T8"
+  });
+
+  assert.equal(payload.address, "204 330 Brae Rd, Duncan, British Columbia V9L3T8");
+  assert.equal(payload.location?.street, "204 330 Brae Rd");
+  assert.equal(payload.location?.city, "Duncan");
+  assert.equal(payload.location?.province, "British Columbia");
+  assert.equal(payload.location?.postalCode, "V9L3T8");
+});
