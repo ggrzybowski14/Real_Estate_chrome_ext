@@ -503,20 +503,16 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
                 Rerun analysis
               </button>
             </p>
-            {!hasRentEstimate ? (
-              <>
-                <p>
-                  <button onClick={searchRentEstimate} disabled={estimateLoading || !stored}>
-                    {estimateLoading ? "Searching..." : "Search / Estimate Rent"}
-                  </button>
-                </p>
-                <p>
-                  <button onClick={searchRentalsCaFallback} disabled={fallbackLoading || !stored}>
-                    {fallbackLoading ? "Searching Rentals.ca..." : "Search Rentals.ca Fallback"}
-                  </button>
-                </p>
-              </>
-            ) : null}
+            <p>
+              <button onClick={searchRentEstimate} disabled={estimateLoading || !stored}>
+                {estimateLoading ? "Searching..." : "Search / Estimate Rent"}
+              </button>
+            </p>
+            <p>
+              <button onClick={searchRentalsCaFallback} disabled={fallbackLoading || !stored}>
+                {fallbackLoading ? "Searching Rentals.ca..." : "Search Rentals.ca Fallback"}
+              </button>
+            </p>
             {rentEstimate ? (
               <div>
                 <p className="workspace-note">
