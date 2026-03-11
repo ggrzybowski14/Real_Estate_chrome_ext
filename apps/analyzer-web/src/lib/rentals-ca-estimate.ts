@@ -21,9 +21,11 @@ function median(values: number[]): number {
   const sorted = values.slice().sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   if (sorted.length % 2 === 0) {
-    return (sorted[mid - 1] + sorted[mid]) / 2;
+    const left = sorted[mid - 1] ?? 0;
+    const right = sorted[mid] ?? 0;
+    return (left + right) / 2;
   }
-  return sorted[mid];
+  return sorted[mid] ?? 0;
 }
 
 function quantile(values: number[], q: number): number {
@@ -32,9 +34,11 @@ function quantile(values: number[], q: number): number {
   const position = (sorted.length - 1) * q;
   const lower = Math.floor(position);
   const upper = Math.ceil(position);
-  if (lower === upper) return sorted[lower];
+  if (lower === upper) return sorted[lower] ?? 0;
   const weight = position - lower;
-  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+  const lowerValue = sorted[lower] ?? 0;
+  const upperValue = sorted[upper] ?? 0;
+  return lowerValue * (1 - weight) + upperValue * weight;
 }
 
 function removeOutliers(values: number[]): number[] {
@@ -62,7 +66,10 @@ function cityFromListing(listing: ListingRecord): string {
     .trim();
   const parts = normalizedAddress.split(",").map((part) => part.trim()).filter(Boolean);
   if (parts.length >= 2) {
-    return parts[1];
+    const city = parts[1];
+    if (city) {
+      return city;
+    }
   }
 
   const provinceMatch = normalizedAddress.match(
