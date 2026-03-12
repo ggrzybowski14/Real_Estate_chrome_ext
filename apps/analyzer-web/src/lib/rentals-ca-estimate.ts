@@ -1,6 +1,21 @@
 import type { AssumptionSourceDetail, ListingRecord } from "@rea/shared";
 import { bedroomBucket, inferRegion, sqftBucket } from "./benchmark-resolver";
 
+type RentalsComparable = {
+  url: string;
+  rent: number | null;
+  title?: string;
+  beds?: number;
+  baths?: number;
+  sqft?: number;
+  yearBuilt?: number;
+  latitude?: number;
+  longitude?: number;
+  distanceKm?: number;
+  nicenessScore: number;
+  featureText: string;
+};
+
 type RentalsCaEstimate = {
   monthlyRent: number;
   lowRent: number;
@@ -10,7 +25,36 @@ type RentalsCaEstimate = {
   method: AssumptionSourceDetail["method"];
   assumptionSource: AssumptionSourceDetail;
   consideredComparables: number[];
+  retrievalTrace: {
+    searchUrl: string;
+    fetchMode: "playwright" | "http_fetch";
+    httpStatus: number | null;
+    isCloudflareBlock: boolean;
+    parsedRentCount: number;
+    cleanedRentCount: number;
+    sampleParsedRents: number[];
+    sampleCleanedRents: number[];
+    comparableListings: RentalsComparable[];
+    sourceComparableCount: number;
+    returnedComparableCount: number;
+    matchedComparableCount: number;
+    matchingStrategy: "beds_location";
+    fallbackMode: "structured_comparables" | "parsed_rent_only";
+    matchingNotes: string;
+    parsedPriceDiagnostics: Array<{
+      rent: number;
+      hasBedsToken: boolean;
+      hasBathsToken: boolean;
+      hasSqftToken: boolean;
+      snippet: string;
+    }>;
+    geoRadiusKm: number;
+    geoTarget: { latitude: number; longitude: number } | null;
+    playwrightError: string | null;
+  };
 };
+
+const MAX_COMPARABLE_DISTANCE_KM = 15;
 
 function clampCurrency(value: number): number {
   return Math.max(Math.round(value), 0);
@@ -50,6 +94,221 @@ function removeOutliers(values: number[]): number[] {
   const min = q1 - 1.5 * iqr;
   const max = q3 + 1.5 * iqr;
   return values.filter((value) => value >= min && value <= max);
+}
+
+function keywordCount(text: string, keywords: string[]): number {
+  const normalized = text.toLowerCase();
+  let count = 0;
+  for (const keyword of keywords) {
+    if (normalized.includes(keyword)) count += 1;
+  }
+  return count;
+}
+
+function nicenessScoreFromText(text: string): number {
+  const positive = [
+    "luxury",
+    "upscale",
+    "premium",
+    "modern",
+    "renovated",
+    "newly renovated",
+    "new build",
+    "high-end",
+    "stainless",
+    "quartz",
+    "hardwood",
+    "amenities",
+    "gym",
+    "concierge"
+  ];
+  const negative = ["dated", "fixer", "as-is", "needs work", "older", "basement"];
+  const pos = keywordCount(text, positive);
+  const neg = keywordCount(text, negative);
+  return Math.min(Math.max(2 + pos - neg, 0), 5);
+}
+
+function normalizeForMatch(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\s-]/gu, " ").replace(/\s+/gu, " ").trim();
+}
+
+function listingPostalPrefix(listing: ListingRecord): string | undefined {
+  const location = (listing.rawSnapshot?.location ?? {}) as Record<string, unknown>;
+  const nested = (listing.rawSnapshot?.rawSnapshot ?? {}) as Record<string, unknown>;
+  const postalCandidates = [
+    typeof location.postalCode === "string" ? location.postalCode : "",
+    typeof nested.postalCode === "string" ? nested.postalCode : "",
+    listing.address ?? ""
+  ];
+  for (const candidate of postalCandidates) {
+    const match = candidate.match(/\b([ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z])\b/iu);
+    if (match?.[1]) return match[1].toLowerCase();
+  }
+  return undefined;
+}
+
+function listingStreetTokens(listing: ListingRecord): string[] {
+  const address = normalizeForMatch(listing.address ?? "");
+  if (!address) return [];
+  const tokens = address.split(/\s+/u).filter((token) => token.length >= 4 && !/^\d+$/u.test(token));
+  const stop = new Set([
+    "british",
+    "columbia",
+    "alberta",
+    "ontario",
+    "quebec",
+    "canada",
+    "street",
+    "st",
+    "avenue",
+    "ave",
+    "road",
+    "rd",
+    "drive",
+    "dr",
+    "court",
+    "unit"
+  ]);
+  return tokens.filter((token) => !stop.has(token)).slice(0, 4);
+}
+
+function addressSimilarityScore(listing: ListingRecord, comparable: RentalsComparable): {
+  isMatch: boolean;
+  penalty: number;
+  note: string;
+} {
+  const text = normalizeForMatch(`${comparable.title ?? ""} ${comparable.featureText} ${comparable.url}`);
+  const city = normalizeForMatch(cityFromListing(listing));
+  const listingFsa = listingPostalPrefix(listing);
+  const comparableFsaMatch = text.match(/\b([abceghj-nprstvxy]\d[abceghj-nprstv-z])\b/iu);
+  const comparableFsa = comparableFsaMatch?.[1]?.toLowerCase();
+  if (listingFsa && comparableFsa && listingFsa !== comparableFsa) {
+    return { isMatch: false, penalty: 999, note: `postal prefix mismatch (${listingFsa} vs ${comparableFsa})` };
+  }
+
+  let penalty = 0;
+  const notes: string[] = [];
+  if (city && text.includes(city)) {
+    notes.push("city match");
+  } else {
+    penalty += 1.2;
+    notes.push("city not explicit");
+  }
+
+  const streetTokens = listingStreetTokens(listing);
+  if (streetTokens.length > 0) {
+    const matchedToken = streetTokens.find((token) => text.includes(token));
+    if (matchedToken) {
+      notes.push(`street token ${matchedToken}`);
+    } else {
+      penalty += 0.8;
+      notes.push("street token not found");
+    }
+  }
+  return { isMatch: true, penalty, note: notes.join("; ") };
+}
+
+function buildFailureBreakdown(
+  scored: Array<{
+    isMatch: boolean;
+    note: string;
+  }>
+): string {
+  const counts = new Map<string, number>();
+  for (const row of scored) {
+    if (row.isMatch) continue;
+    const label = row.note.split(";")[0]?.trim() || "unknown";
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([label, count]) => `${label} (${count})`)
+    .join(" | ");
+}
+
+function parseCoordinate(value: unknown, maxAbs: number): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= maxAbs) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed) && Math.abs(parsed) <= maxAbs) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function priceContextDiagnostics(
+  html: string
+): Array<{
+  rent: number;
+  hasBedsToken: boolean;
+  hasBathsToken: boolean;
+  hasSqftToken: boolean;
+  snippet: string;
+}> {
+  const diagnostics: Array<{
+    rent: number;
+    hasBedsToken: boolean;
+    hasBathsToken: boolean;
+    hasSqftToken: boolean;
+    snippet: string;
+  }> = [];
+  const pattern = /\$\s*([0-9][0-9,]{2,})/giu;
+  for (const match of html.matchAll(pattern)) {
+    const rent = Number((match[1] ?? "").replace(/,/gu, ""));
+    if (!Number.isFinite(rent) || rent < 600 || rent > 20000) continue;
+    const start = Math.max((match.index ?? 0) - 140, 0);
+    const end = Math.min((match.index ?? 0) + 180, html.length);
+    const context = html.slice(start, end).replace(/\s+/gu, " ").trim();
+    diagnostics.push({
+      rent,
+      hasBedsToken: /(bed|beds|bedroom|bedrooms|bd|br)\b/iu.test(context),
+      hasBathsToken: /(bath|baths|bathroom|bathrooms|ba)\b/iu.test(context),
+      hasSqftToken: /(sq\.?\s*ft|sqft|ft2|ft²)/iu.test(context),
+      snippet: context.slice(0, 180)
+    });
+    if (diagnostics.length >= 8) break;
+  }
+  return diagnostics;
+}
+
+function collectCoordinates(node: unknown): Array<{ latitude: number; longitude: number }> {
+  const out: Array<{ latitude: number; longitude: number }> = [];
+  if (!node || typeof node !== "object") return out;
+  const record = node as Record<string, unknown>;
+  const lat = parseCoordinate(record.latitude ?? record.lat, 90);
+  const lng = parseCoordinate(record.longitude ?? record.lng ?? record.lon, 180);
+  if (typeof lat === "number" && typeof lng === "number") {
+    if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      out.push({ latitude: lat, longitude: lng });
+    }
+  }
+  for (const value of Object.values(record)) {
+    if (value && typeof value === "object") {
+      out.push(...collectCoordinates(value));
+    }
+  }
+  return out;
+}
+
+function listingCoordinates(listing: ListingRecord): { latitude: number; longitude: number } | null {
+  const points = collectCoordinates(listing.rawSnapshot ?? {});
+  return points[0] ?? null;
+}
+
+function haversineKm(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }): number {
+  const toRad = (value: number): number => (value * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLng = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng;
+  return 6371 * (2 * Math.asin(Math.min(1, Math.sqrt(h))));
 }
 
 function cityFromListing(listing: ListingRecord): string {
@@ -125,7 +384,108 @@ async function fetchRentalsCaHtmlWithPlaywright(targetUrl: string): Promise<{
       await page.waitForTimeout(4500);
       const renderedHtml = await page.content();
       const textContent = await page.evaluate(() => document.body?.innerText ?? "");
-      return { html: `${renderedHtml}\n${textContent}`, error: null };
+      const comparableSnapshots = await page.evaluate(() => {
+        const compact = (value: string): string => value.replace(/\s+/g, " ").trim();
+        const anchors = Array.from(document.querySelectorAll("a[href]"));
+        const rows: Array<{
+          url: string;
+          title: string;
+          text: string;
+          rent: number | null;
+          beds: number | null;
+          baths: number | null;
+          sqft: number | null;
+        }> = [];
+        const seen = new Set<string>();
+        for (const anchor of anchors) {
+          const href = anchor.getAttribute("href") ?? "";
+          if (!href.includes("rentals.ca") && !href.startsWith("/")) continue;
+          const absolute = new URL(href, "https://rentals.ca").toString();
+          if (!/rentals\.ca\/.+/i.test(absolute)) continue;
+          const container =
+            anchor.closest("article, li, [data-testid*='listing'], [class*='listing'], [class*='card']") ??
+            anchor.parentElement;
+          const text = compact((container?.textContent ?? anchor.textContent ?? "").slice(0, 1200));
+          if (!text) continue;
+          const rentMatch = text.match(/\$\s*([0-9][0-9,]{2,})/i);
+          const bedsMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:bed|beds|bedroom|bedrooms|bd|br)\b/i);
+          const bathsMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:bath|baths|bathroom|bathrooms|ba)\b/i);
+          const sqftMatch = text.match(/([0-9][0-9,]{2,4})\s*(?:sq\.?\s*ft|sqft|ft2|ft²)/i);
+          const rent = rentMatch ? Number((rentMatch[1] ?? "").replace(/,/g, "")) : null;
+          const beds = bedsMatch ? Number(bedsMatch[1] ?? "") : null;
+          const baths = bathsMatch ? Number(bathsMatch[1] ?? "") : null;
+          const sqft = sqftMatch ? Number((sqftMatch[1] ?? "").replace(/,/g, "")) : null;
+          const key = `${absolute}|${rent ?? "na"}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push({
+            url: absolute,
+            title: compact((anchor.textContent ?? "").slice(0, 180)),
+            text,
+            rent: Number.isFinite(rent as number) ? rent : null,
+            beds: Number.isFinite(beds as number) ? beds : null,
+            baths: Number.isFinite(baths as number) ? baths : null,
+            sqft: Number.isFinite(sqft as number) ? sqft : null
+          });
+          if (rows.length >= 40) break;
+        }
+        return rows;
+      });
+      const detailLimitRaw = Number(process.env.RENTALS_PLAYWRIGHT_DETAIL_LIMIT ?? "6");
+      const detailLimit = Number.isFinite(detailLimitRaw)
+        ? Math.min(Math.max(Math.round(detailLimitRaw), 0), 12)
+        : 6;
+      const candidateUrls = Array.from(
+        new Set(
+          comparableSnapshots
+            .map((item) => item.url)
+            .filter((url) => /^https:\/\/rentals\.ca\/.+/iu.test(url))
+        )
+      ).slice(0, detailLimit);
+      const detailSnapshots: Array<{
+        url: string;
+        title: string;
+        price: number | null;
+        beds: number | null;
+        baths: number | null;
+        sqft: number | null;
+      }> = [];
+      for (const url of candidateUrls) {
+        const detailPage = await context.newPage();
+        try {
+          await detailPage.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
+          await detailPage.waitForTimeout(1200);
+          const detailText = await detailPage.evaluate(() => document.body?.innerText ?? "");
+          const compactText = detailText.replace(/\s+/gu, " ").trim();
+          const priceMatch = compactText.match(/\$\s*([0-9][0-9,]{2,})/u);
+          const bedsMatch = compactText.match(/(\d+(?:\.\d+)?)\s*(?:bed|beds|bedroom|bedrooms|bd|br)\b/iu);
+          const bathsMatch = compactText.match(/(\d+(?:\.\d+)?)\s*(?:bath|baths|bathroom|bathrooms|ba)\b/iu);
+          const sqftMatch = compactText.match(/([0-9][0-9,]{2,4})\s*(?:sq\.?\s*ft|sqft|ft2|ft²)\b/iu);
+          const price = priceMatch ? Number((priceMatch[1] ?? "").replace(/,/gu, "")) : null;
+          const beds = bedsMatch ? Number(bedsMatch[1] ?? "") : null;
+          const baths = bathsMatch ? Number(bathsMatch[1] ?? "") : null;
+          const sqft = sqftMatch ? Number((sqftMatch[1] ?? "").replace(/,/gu, "")) : null;
+          if (price !== null && Number.isFinite(price) && price >= 600 && price <= 20000) {
+            detailSnapshots.push({
+              url,
+              title: compactText.slice(0, 180),
+              price,
+              beds: Number.isFinite(beds as number) ? beds : null,
+              baths: Number.isFinite(baths as number) ? baths : null,
+              sqft: Number.isFinite(sqft as number) ? sqft : null
+            });
+          }
+        } catch {
+          // Ignore individual detail page failures and continue.
+        } finally {
+          await detailPage.close();
+        }
+      }
+      const serializedSnapshots = JSON.stringify(comparableSnapshots);
+      const serializedDetailSnapshots = JSON.stringify(detailSnapshots);
+      const injected = `<script id="rea-playwright-comparables" type="application/json">${serializedSnapshots}</script>`;
+      const injectedDetails = `<script id="rea-playwright-detail-comparables" type="application/json">${serializedDetailSnapshots}</script>`;
+      return { html: `${renderedHtml}\n${injected}\n${injectedDetails}\n${textContent}`, error: null };
     } finally {
       await browser.close();
     }
@@ -207,8 +567,205 @@ function noMatchEstimate(searchUrl: string, listing: ListingRecord, notes: strin
         fetchedAt: new Date().toISOString()
       }
     },
-    consideredComparables: []
+    consideredComparables: [],
+    retrievalTrace: {
+      searchUrl,
+      fetchMode: "http_fetch",
+      httpStatus: null,
+      isCloudflareBlock: false,
+      parsedRentCount: 0,
+      cleanedRentCount: 0,
+      sampleParsedRents: [],
+      sampleCleanedRents: [],
+      comparableListings: [],
+      sourceComparableCount: 0,
+      returnedComparableCount: 0,
+      matchedComparableCount: 0,
+      matchingStrategy: "beds_location",
+      fallbackMode: "structured_comparables",
+      matchingNotes: "No comparables were eligible.",
+      parsedPriceDiagnostics: [],
+      geoRadiusKm: MAX_COMPARABLE_DISTANCE_KM,
+      geoTarget: listingCoordinates(listing),
+      playwrightError: null
+    }
   };
+}
+
+function extractComparableListingsFromHtml(html: string, searchUrl: string): RentalsComparable[] {
+  const sourceHost = "https://rentals.ca";
+  const items: RentalsComparable[] = [];
+  const seen = new Set<string>();
+  const pushComparable = (
+    url: string,
+    rent: number | null,
+    title: string | undefined,
+    featureText: string
+  ): void => {
+    const normalizedUrl = url.trim();
+    if (!normalizedUrl) return;
+    const key = `${normalizedUrl}|${rent ?? "na"}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const bedsMatch =
+      featureText.match(/(\d+(?:\.\d+)?)\s*(?:bed|beds|bedroom|bedrooms|bd|br)\b/iu) ??
+      featureText.match(/"beds?"\s*:\s*([0-9]+(?:\.[0-9]+)?)/iu);
+    const bathsMatch =
+      featureText.match(/(\d+(?:\.\d+)?)\s*(?:bath|baths|bathroom|bathrooms|ba)\b/iu) ??
+      featureText.match(/"baths?"\s*:\s*([0-9]+(?:\.[0-9]+)?)/iu);
+    const sqftRangeMatch = featureText.match(
+      /([0-9][0-9,]{2,4})\s*-\s*([0-9][0-9,]{2,4})\s*(?:sq\.?\s*ft|sqft|ft2|ft²)/iu
+    );
+    const sqftSingleMatch =
+      featureText.match(/([0-9][0-9,]{2,4})\s*(?:sq\.?\s*ft|sqft|ft2|ft²)/iu) ??
+      featureText.match(/"sqft"\s*:\s*([0-9][0-9,]{2,4})/iu);
+    const yearMatch = featureText.match(/\b(19[5-9]\d|20[0-2]\d)\b/u);
+    const latMatch = featureText.match(/"?(?:latitude|lat)"?\s*[:=]\s*(-?\d{1,2}\.\d+)/iu);
+    const lngMatch = featureText.match(/"?(?:longitude|lng|lon)"?\s*[:=]\s*(-?\d{1,3}\.\d+)/iu);
+    const beds = bedsMatch ? Number(bedsMatch[1] ?? "") : undefined;
+    const baths = bathsMatch ? Number(bathsMatch[1] ?? "") : undefined;
+    const sqft = sqftRangeMatch
+      ? Math.round(
+          (Number((sqftRangeMatch[1] ?? "").replace(/,/gu, "")) +
+            Number((sqftRangeMatch[2] ?? "").replace(/,/gu, ""))) /
+            2
+        )
+      : sqftSingleMatch
+        ? Number((sqftSingleMatch[1] ?? "").replace(/,/gu, ""))
+        : undefined;
+    const yearBuilt = yearMatch ? Number(yearMatch[1] ?? "") : undefined;
+    const latitude = latMatch ? Number(latMatch[1] ?? "") : undefined;
+    const longitude = lngMatch ? Number(lngMatch[1] ?? "") : undefined;
+    items.push({
+      url: normalizedUrl,
+      rent,
+      title,
+      beds: Number.isFinite(beds) ? beds : undefined,
+      baths: Number.isFinite(baths) ? baths : undefined,
+      sqft: Number.isFinite(sqft) ? sqft : undefined,
+      yearBuilt: Number.isFinite(yearBuilt) ? yearBuilt : undefined,
+      latitude:
+        typeof latitude === "number" && Number.isFinite(latitude) && Math.abs(latitude) <= 90
+          ? latitude
+          : undefined,
+      longitude:
+        typeof longitude === "number" && Number.isFinite(longitude) && Math.abs(longitude) <= 180
+          ? longitude
+          : undefined,
+      nicenessScore: nicenessScoreFromText(featureText),
+      featureText
+    });
+  };
+
+  const anchorPattern = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/giu;
+  for (const match of html.matchAll(anchorPattern)) {
+    const rawHref = (match[1] ?? "").trim();
+    if (!rawHref || rawHref.startsWith("#") || rawHref.startsWith("javascript:")) continue;
+    let absoluteUrl = "";
+    try {
+      absoluteUrl = new URL(rawHref, sourceHost).toString();
+    } catch {
+      continue;
+    }
+    if (!absoluteUrl.includes("rentals.ca")) continue;
+
+    const body = (match[2] ?? "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").trim();
+    const rentMatch = body.match(/\$\s*([0-9][0-9,]{2,})/u);
+    const rent = rentMatch ? Number((rentMatch[1] ?? "").replace(/,/gu, "")) : null;
+    const title = body.length > 0 ? body.slice(0, 140) : undefined;
+    if (rent !== null && (!Number.isFinite(rent) || rent < 600 || rent > 20000)) continue;
+    if (rent === null) continue;
+    pushComparable(absoluteUrl, rent, title, body);
+    if (items.length >= 12) return items;
+  }
+
+  const jsonUrlPattern = /"url"\s*:\s*"(https?:\/\/(?:www\.)?rentals\.ca[^"]+)"/giu;
+  for (const match of html.matchAll(jsonUrlPattern)) {
+    const url = (match[1] ?? "").trim();
+    if (!url) continue;
+    const index = match.index ?? 0;
+    const objectStart = html.lastIndexOf("{", index);
+    const objectEnd = html.indexOf("}", index);
+    const context =
+      objectStart >= 0 && objectEnd > objectStart && objectEnd - objectStart < 5000
+        ? html.slice(objectStart, objectEnd + 1)
+        : html.slice(Math.max(index - 700, 0), Math.min(index + 700, html.length));
+    const rentMatch = context.match(/"price"\s*:\s*"?\$?\s*([0-9][0-9,]{2,})"?/iu);
+    const rent = rentMatch ? Number((rentMatch[1] ?? "").replace(/,/gu, "")) : null;
+    if (rent !== null && (!Number.isFinite(rent) || rent < 600 || rent > 20000)) continue;
+    if (rent === null) continue;
+    pushComparable(url, rent, undefined, context);
+    if (items.length >= 12) break;
+  }
+
+  if (items.length === 0) {
+    const textOnly = html
+      .replace(/<script[\s\S]*?<\/script>/giu, " ")
+      .replace(/<style[\s\S]*?<\/style>/giu, " ")
+      .replace(/<[^>]+>/gu, "\n")
+      .replace(/\u00a0/gu, " ")
+      .replace(/\r/gu, "");
+    const lines = textOnly.split("\n").map((line) => line.trim()).filter(Boolean);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index] ?? "";
+      if (!/\$\s*[0-9][0-9,]{2,}/u.test(line)) continue;
+      if (!/(bed|bath|sqft|ft²|month|mo)/iu.test(line)) continue;
+      const rentMatch = line.match(/\$\s*([0-9][0-9,]{2,})/u);
+      const rent = rentMatch ? Number((rentMatch[1] ?? "").replace(/,/gu, "")) : null;
+      if (rent === null || !Number.isFinite(rent) || rent < 600 || rent > 20000) continue;
+      pushComparable(`${searchUrl}#inline-${index}`, rent, line.slice(0, 140), line);
+      if (items.length >= 12) break;
+    }
+  }
+  return items;
+}
+
+function similarityScore(
+  listing: ListingRecord,
+  comparable: RentalsComparable,
+  geoTarget: { latitude: number; longitude: number } | null
+): {
+  isMatch: boolean;
+  score: number;
+  note: string;
+} {
+  const targetBeds = typeof listing.beds === "number" ? listing.beds : undefined;
+
+  let score = 0;
+  const notes: string[] = [];
+
+  if (targetBeds && comparable.beds) {
+    const diff = Math.abs(targetBeds - comparable.beds);
+    if (diff > 0) return { isMatch: false, score: 999, note: "bed mismatch" };
+    notes.push(`beds diff ${diff.toFixed(1)}`);
+  } else {
+    score += 1.5;
+    notes.push("beds missing");
+  }
+  if (geoTarget && typeof comparable.latitude === "number" && typeof comparable.longitude === "number") {
+    const distanceKm = haversineKm(geoTarget, { latitude: comparable.latitude, longitude: comparable.longitude });
+    comparable.distanceKm = Number(distanceKm.toFixed(2));
+    if (distanceKm > MAX_COMPARABLE_DISTANCE_KM) {
+      return {
+        isMatch: false,
+        score: 999,
+        note: `distance ${distanceKm.toFixed(1)}km > ${MAX_COMPARABLE_DISTANCE_KM}km`
+      };
+    }
+    score += Math.min(distanceKm / 3, 4);
+    notes.push(`distance ${distanceKm.toFixed(1)}km`);
+  } else if (geoTarget) {
+    score += 1;
+    notes.push("distance unknown");
+  } else {
+    const addressSimilarity = addressSimilarityScore(listing, comparable);
+    if (!addressSimilarity.isMatch) {
+      return { isMatch: false, score: 999, note: addressSimilarity.note };
+    }
+    score += addressSimilarity.penalty;
+    notes.push(addressSimilarity.note);
+  }
+  return { isMatch: true, score, note: notes.join("; ") };
 }
 
 export async function estimateRentFromRentalsCa(listing: ListingRecord): Promise<RentalsCaEstimate> {
@@ -218,7 +775,8 @@ export async function estimateRentFromRentalsCa(listing: ListingRecord): Promise
   const htmlFromPlaywright = playwrightHtml && playwrightHtml.trim().length > 0 ? playwrightHtml : null;
 
   let html = htmlFromPlaywright;
-  let response: Response;
+  let response: Response | undefined;
+  let fetchMode: "playwright" | "http_fetch" = htmlFromPlaywright ? "playwright" : "http_fetch";
   if (!html) {
     try {
       response = await fetch(searchUrl, {
@@ -233,34 +791,189 @@ export async function estimateRentFromRentalsCa(listing: ListingRecord): Promise
           const playwrightFailureNote = playwrightResult.error
             ? ` Playwright error: ${playwrightResult.error}.`
             : "";
-          return noMatchEstimate(
+          const estimate = noMatchEstimate(
             searchUrl,
             listing,
             `Rentals.ca blocked direct access (HTTP 403). Playwright could not bypass challenge for this run.${playwrightFailureNote}`
           );
+          estimate.retrievalTrace.httpStatus = 403;
+          estimate.retrievalTrace.playwrightError = playwrightResult.error;
+          return estimate;
         }
-        return noMatchEstimate(
+        const estimate = noMatchEstimate(
           searchUrl,
           listing,
           `Rentals.ca fallback scrape returned HTTP ${response.status}.`
         );
+        estimate.retrievalTrace.httpStatus = response.status;
+        estimate.retrievalTrace.playwrightError = playwrightResult.error;
+        return estimate;
       }
     } catch {
-      return noMatchEstimate(searchUrl, listing, "Rentals.ca fallback scrape request failed.");
+      const estimate = noMatchEstimate(searchUrl, listing, "Rentals.ca fallback scrape request failed.");
+      estimate.retrievalTrace.playwrightError = playwrightResult.error;
+      return estimate;
     }
   }
 
   if (looksLikeCloudflareBlock(html)) {
-    return noMatchEstimate(
+    const estimate = noMatchEstimate(
       searchUrl,
       listing,
       "Rentals.ca challenge page detected. Playwright session did not resolve listings for this request."
     );
+    estimate.retrievalTrace.fetchMode = fetchMode;
+    estimate.retrievalTrace.httpStatus = response?.status ?? null;
+    estimate.retrievalTrace.isCloudflareBlock = true;
+    estimate.retrievalTrace.playwrightError = playwrightResult.error;
+    return estimate;
   }
   const parsed = extractRentValuesFromHtml(html);
-  const cleaned = removeOutliers(parsed);
+  const parsedDiagnostics = priceContextDiagnostics(html);
+  const geoTarget = listingCoordinates(listing);
+  const allComparableListings = extractComparableListingsFromHtml(html, searchUrl);
+  const fallbackParsedOnlyRents = allComparableListings.length === 0 ? removeOutliers(parsed) : [];
+  if (allComparableListings.length === 0 && fallbackParsedOnlyRents.length > 0) {
+    const fallbackRent = clampCurrency(median(fallbackParsedOnlyRents));
+    const p25 = clampCurrency(quantile(fallbackParsedOnlyRents, 0.25));
+    const p75 = clampCurrency(quantile(fallbackParsedOnlyRents, 0.75));
+    const lowRent = p25 > 0 ? p25 : clampCurrency(fallbackRent * 0.9);
+    const highRent = p75 > 0 ? p75 : clampCurrency(fallbackRent * 1.1);
+    const region = inferRegion(listing);
+    console.info("[rentals-fallback:diagnostics]", {
+      listingId: listing.id,
+      searchUrl,
+      fetchMode,
+      parsedRentCount: parsed.length,
+      extractedComparableCount: 0,
+      matchedComparableCount: fallbackParsedOnlyRents.length,
+      cleanedComparableCount: fallbackParsedOnlyRents.length,
+      estimateRent: fallbackRent,
+      geoTarget,
+      reason: "parsed_rent_points_only"
+      ,
+      parsedDiagnostics: parsedDiagnostics.map((row) => ({
+        rent: row.rent,
+        hasBedsToken: row.hasBedsToken,
+        hasBathsToken: row.hasBathsToken,
+        hasSqftToken: row.hasSqftToken
+      }))
+    });
+    return {
+      monthlyRent: fallbackRent,
+      lowRent,
+      highRent,
+      confidence: Math.min(0.28 + fallbackParsedOnlyRents.length * 0.03, 0.6),
+      noRentMatch: fallbackRent <= 0,
+      method: "regional_fallback",
+      assumptionSource: {
+        field: "monthlyRent",
+        value: fallbackRent,
+        method: "regional_fallback",
+        confidence: Math.min(0.28 + fallbackParsedOnlyRents.length * 0.03, 0.6),
+        notes:
+          "Rentals.ca fallback used parsed rent points only (listing metadata unavailable in response).",
+        reference: {
+          publisher: "Rentals.ca",
+          dataset: "Manual fallback scrape",
+          metric: "median_rent",
+          region: region.regionLabel,
+          period: "live",
+          url: searchUrl,
+          fetchedAt: new Date().toISOString()
+        }
+      },
+      consideredComparables: fallbackParsedOnlyRents.slice(0, 12),
+      retrievalTrace: {
+        searchUrl,
+        fetchMode,
+        httpStatus: response?.status ?? null,
+        isCloudflareBlock: false,
+        parsedRentCount: parsed.length,
+        cleanedRentCount: fallbackParsedOnlyRents.length,
+        sampleParsedRents: parsed.slice(0, 12),
+        sampleCleanedRents: fallbackParsedOnlyRents.slice(0, 12),
+        comparableListings: fallbackParsedOnlyRents.slice(0, 8).map((rent, index) => ({
+          url: `${searchUrl}#parsed-rent-${index + 1}`,
+          rent,
+          title: "Parsed rent point (metadata unavailable)",
+          nicenessScore: 0,
+          featureText: "parsed_rent_only"
+        })),
+        sourceComparableCount: 0,
+        returnedComparableCount: Math.min(fallbackParsedOnlyRents.length, 8),
+        matchedComparableCount: fallbackParsedOnlyRents.length,
+        matchingStrategy: "beds_location",
+        fallbackMode: "parsed_rent_only",
+        matchingNotes:
+          "Used parsed rent points only because Rentals.ca response did not include comparable listing metadata.",
+        parsedPriceDiagnostics: parsedDiagnostics,
+        geoRadiusKm: MAX_COMPARABLE_DISTANCE_KM,
+        geoTarget,
+        playwrightError: playwrightResult.error
+      }
+    };
+  }
+  const scored = allComparableListings
+    .filter((item) => typeof item.rent === "number" && Number.isFinite(item.rent))
+    .map((item) => {
+      const similarity = similarityScore(listing, item, geoTarget);
+      return { item, ...similarity };
+    });
+  const matchedComparables = scored
+    .filter((row) => row.isMatch)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 12)
+    .map((row) => row.item);
+  const matchedRents = matchedComparables.map((item) => item.rent ?? 0).filter((rent) => rent > 0);
+  const cleaned = removeOutliers(matchedRents);
+  const failureBreakdown = buildFailureBreakdown(scored);
+  const scoredPreview = scored.slice(0, 6).map((row) => ({
+    isMatch: row.isMatch,
+    score: Number.isFinite(row.score) ? Number(row.score.toFixed(2)) : row.score,
+    note: row.note,
+    rent: row.item.rent,
+    beds: row.item.beds,
+    baths: row.item.baths,
+    sqft: row.item.sqft,
+    distanceKm: row.item.distanceKm,
+    url: row.item.url
+  }));
   if (cleaned.length === 0) {
-    return noMatchEstimate(searchUrl, listing, "No parseable Rentals.ca rent comparables found.");
+    console.warn("[rentals-fallback:diagnostics]", {
+      listingId: listing.id,
+      searchUrl,
+      fetchMode,
+      parsedRentCount: parsed.length,
+      extractedComparableCount: allComparableListings.length,
+      matchedComparableCount: matchedComparables.length,
+      cleanedComparableCount: cleaned.length,
+      geoTarget,
+      failureBreakdown: failureBreakdown || "no matches",
+      scoredPreview
+    });
+    const estimate = noMatchEstimate(
+      searchUrl,
+      listing,
+      "No Rentals.ca comparables matched beds + rough location requirements."
+    );
+    estimate.retrievalTrace.fetchMode = fetchMode;
+    estimate.retrievalTrace.httpStatus = response?.status ?? null;
+    estimate.retrievalTrace.parsedRentCount = parsed.length;
+    estimate.retrievalTrace.cleanedRentCount = cleaned.length;
+    estimate.retrievalTrace.sampleParsedRents = parsed.slice(0, 12);
+    estimate.retrievalTrace.sampleCleanedRents = cleaned.slice(0, 12);
+    estimate.retrievalTrace.comparableListings = allComparableListings.slice(0, 12);
+    estimate.retrievalTrace.sourceComparableCount = allComparableListings.length;
+    estimate.retrievalTrace.returnedComparableCount = 0;
+    estimate.retrievalTrace.matchedComparableCount = matchedComparables.length;
+    estimate.retrievalTrace.matchingNotes = failureBreakdown || "No comparable listings with required features.";
+    estimate.retrievalTrace.fallbackMode = "structured_comparables";
+    estimate.retrievalTrace.parsedPriceDiagnostics = parsedDiagnostics;
+    estimate.retrievalTrace.geoRadiusKm = MAX_COMPARABLE_DISTANCE_KM;
+    estimate.retrievalTrace.geoTarget = geoTarget;
+    estimate.retrievalTrace.playwrightError = playwrightResult.error;
+    return estimate;
   }
 
   const rent = clampCurrency(median(cleaned));
@@ -269,20 +982,32 @@ export async function estimateRentFromRentalsCa(listing: ListingRecord): Promise
   const lowRent = p25 > 0 ? p25 : clampCurrency(rent * 0.9);
   const highRent = p75 > 0 ? p75 : clampCurrency(rent * 1.1);
   const region = inferRegion(listing);
+  console.info("[rentals-fallback:diagnostics]", {
+    listingId: listing.id,
+    searchUrl,
+    fetchMode,
+    parsedRentCount: parsed.length,
+    extractedComparableCount: allComparableListings.length,
+    matchedComparableCount: matchedComparables.length,
+    cleanedComparableCount: cleaned.length,
+    estimateRent: rent,
+    geoTarget,
+    scoredPreview
+  });
 
   return {
     monthlyRent: rent,
     lowRent,
     highRent,
-    confidence: Math.min(0.35 + cleaned.length * 0.04, 0.72),
+    confidence: Math.min(0.4 + cleaned.length * 0.05, 0.82),
     noRentMatch: rent <= 0,
     method: "regional_fallback",
     assumptionSource: {
       field: "monthlyRent",
       value: rent,
       method: "regional_fallback",
-      confidence: Math.min(0.35 + cleaned.length * 0.04, 0.72),
-      notes: `Rentals.ca fallback scrape (manual trigger), ${cleaned.length} comparable rent points.`,
+      confidence: Math.min(0.4 + cleaned.length * 0.05, 0.82),
+      notes: `Rentals.ca fallback (bedrooms + rough location), ${cleaned.length} comparable rent points.`,
       reference: {
         publisher: "Rentals.ca",
         dataset: "Manual fallback scrape",
@@ -293,7 +1018,30 @@ export async function estimateRentFromRentalsCa(listing: ListingRecord): Promise
         fetchedAt: new Date().toISOString()
       }
     },
-    consideredComparables: cleaned.slice(0, 12)
+    consideredComparables: cleaned.slice(0, 12),
+    retrievalTrace: {
+      searchUrl,
+      fetchMode,
+      httpStatus: response?.status ?? null,
+      isCloudflareBlock: false,
+      parsedRentCount: parsed.length,
+      cleanedRentCount: cleaned.length,
+      sampleParsedRents: parsed.slice(0, 12),
+      sampleCleanedRents: cleaned.slice(0, 12),
+      comparableListings: matchedComparables,
+      sourceComparableCount: allComparableListings.length,
+      returnedComparableCount: matchedComparables.length,
+      matchedComparableCount: matchedComparables.length,
+      matchingStrategy: "beds_location",
+      fallbackMode: "structured_comparables",
+      matchingNotes: geoTarget
+        ? `Matched by bedrooms and within ${MAX_COMPARABLE_DISTANCE_KM}km when coordinates are available.`
+        : "Matched by bedrooms plus rough address proximity (city/postal/street tokens).",
+      parsedPriceDiagnostics: parsedDiagnostics,
+      geoRadiusKm: MAX_COMPARABLE_DISTANCE_KM,
+      geoTarget,
+      playwrightError: playwrightResult.error
+    }
   };
 }
 

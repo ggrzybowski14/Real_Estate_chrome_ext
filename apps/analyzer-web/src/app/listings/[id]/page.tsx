@@ -24,6 +24,46 @@ type RentEstimateResponse = {
     method: AssumptionSourceDetail["method"];
     assumptionSource: AssumptionSourceDetail;
     consideredComparables?: number[];
+    retrievalTrace?: {
+      searchUrl: string;
+      fetchMode: "playwright" | "http_fetch";
+      httpStatus: number | null;
+      isCloudflareBlock: boolean;
+      parsedRentCount: number;
+      cleanedRentCount: number;
+      sampleParsedRents: number[];
+      sampleCleanedRents: number[];
+      comparableListings: Array<{
+        url: string;
+        rent: number | null;
+        title?: string;
+        beds?: number;
+        baths?: number;
+        sqft?: number;
+        yearBuilt?: number;
+        latitude?: number;
+        longitude?: number;
+        distanceKm?: number;
+        nicenessScore?: number;
+        featureText?: string;
+      }>;
+      sourceComparableCount?: number;
+      returnedComparableCount?: number;
+      matchedComparableCount?: number;
+      matchingStrategy?: string;
+      fallbackMode?: "structured_comparables" | "parsed_rent_only";
+      matchingNotes?: string;
+      parsedPriceDiagnostics?: Array<{
+        rent: number;
+        hasBedsToken: boolean;
+        hasBathsToken: boolean;
+        hasSqftToken: boolean;
+        snippet: string;
+      }>;
+      geoRadiusKm?: number;
+      geoTarget?: { latitude: number; longitude: number } | null;
+      playwrightError: string | null;
+    };
   };
   error?: string;
 };
@@ -259,12 +299,44 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
           return;
         }
         setRentEstimate(data.estimate);
+        const trace = data.estimate.retrievalTrace;
+        if (trace) {
+          const comparablePreview = trace.comparableListings.slice(0, 5).map((item) => ({
+            rent: item.rent,
+            beds: item.beds ?? null,
+            baths: item.baths ?? null,
+            sqft: item.sqft ?? null,
+            distanceKm: item.distanceKm ?? null,
+            url: item.url
+          }));
+          console.log("[rent-fallback:trace]", {
+            listingId: stored.listing.id,
+            strategy: trace.matchingStrategy,
+            fallbackMode: trace.fallbackMode ?? "structured_comparables",
+            parsedRentCount: trace.parsedRentCount,
+            sourceComparableCount: trace.sourceComparableCount ?? trace.comparableListings.length,
+            returnedComparableCount: trace.returnedComparableCount ?? trace.comparableListings.length,
+            matchedComparableCount: trace.matchedComparableCount ?? 0,
+            cleanedComparableCount: trace.cleanedRentCount,
+            matchingNotes: trace.matchingNotes ?? "",
+            geoTarget: trace.geoTarget ?? null,
+            geoRadiusKm: trace.geoRadiusKm ?? null,
+            comparablePreview,
+            parsedPriceDiagnostics: (trace.parsedPriceDiagnostics ?? []).map((row) => ({
+              rent: row.rent,
+              hasBedsToken: row.hasBedsToken,
+              hasBathsToken: row.hasBathsToken,
+              hasSqftToken: row.hasSqftToken
+            }))
+          });
+        }
         if (data.estimate.noRentMatch) {
           outcome = "no_match";
           resultMeta = {
             method: data.estimate.method,
             note: data.estimate.assumptionSource?.notes ?? "",
-            comparables: data.estimate.consideredComparables?.length ?? 0
+            comparables: data.estimate.consideredComparables?.length ?? 0,
+            trace: data.estimate.retrievalTrace
           };
           setError(
             data.estimate.assumptionSource.notes ??
@@ -277,7 +349,8 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
             monthlyRent: data.estimate.monthlyRent,
             lowRent: data.estimate.lowRent,
             highRent: data.estimate.highRent,
-            comparables: data.estimate.consideredComparables?.length ?? 0
+            comparables: data.estimate.consideredComparables?.length ?? 0,
+            trace: data.estimate.retrievalTrace
           };
         }
       })
@@ -524,6 +597,90 @@ export default function ListingDetailPage({ params }: { params: { id: string } }
                   <p className="workspace-note">
                     Rentals.ca comparables found: {rentEstimate.consideredComparables.length}
                   </p>
+                ) : null}
+                {rentEstimate.retrievalTrace ? (
+                  <div className="workspace-note">
+                    <p>
+                      Rentals.ca trace:{" "}
+                      <a href={rentEstimate.retrievalTrace.searchUrl} target="_blank" rel="noreferrer">
+                        search URL
+                      </a>{" "}
+                      ({rentEstimate.retrievalTrace.fetchMode}
+                      {typeof rentEstimate.retrievalTrace.httpStatus === "number"
+                        ? `, HTTP ${rentEstimate.retrievalTrace.httpStatus}`
+                        : ""})
+                    </p>
+                    <p>
+                      Parsed rents: {rentEstimate.retrievalTrace.parsedRentCount}, after filtering:{" "}
+                      {rentEstimate.retrievalTrace.cleanedRentCount}
+                    </p>
+                    <p>
+                      Matched comps used: {rentEstimate.retrievalTrace.matchedComparableCount ?? 0}
+                      {rentEstimate.retrievalTrace.matchingStrategy
+                        ? ` (${rentEstimate.retrievalTrace.matchingStrategy})`
+                        : ""}
+                    </p>
+                    {rentEstimate.retrievalTrace.matchingNotes ? (
+                      <p>Matching notes: {rentEstimate.retrievalTrace.matchingNotes}</p>
+                    ) : null}
+                    {rentEstimate.retrievalTrace.geoTarget ? (
+                      <p>
+                        Geo target: {formatNumber(rentEstimate.retrievalTrace.geoTarget.latitude, 4)},{" "}
+                        {formatNumber(rentEstimate.retrievalTrace.geoTarget.longitude, 4)} (radius{" "}
+                        {rentEstimate.retrievalTrace.geoRadiusKm ?? 0} km)
+                      </p>
+                    ) : (
+                      <p>Geo target unavailable from listing snapshot (distance filter skipped).</p>
+                    )}
+                    {rentEstimate.retrievalTrace.sampleCleanedRents.length > 0 ? (
+                      <p>
+                        Cleaned rent points used:{" "}
+                        {rentEstimate.retrievalTrace.sampleCleanedRents.map((value) => formatCurrency(value)).join(", ")}
+                      </p>
+                    ) : null}
+                    {rentEstimate.retrievalTrace.comparableListings.length > 0 ? (
+                      <div>
+                        <p>Matched source listings:</p>
+                        <table className="underwriting-table">
+                          <thead>
+                            <tr>
+                              <th className="label">Rent</th>
+                              <th className="label">Beds / Baths</th>
+                              <th className="label">Sqft</th>
+                              <th className="label">Year</th>
+                              <th className="label">Niceness</th>
+                              <th className="label">Distance</th>
+                              <th className="label">Source</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rentEstimate.retrievalTrace.comparableListings.slice(0, 6).map((item, index) => (
+                              <tr key={`${item.url}-${index}`}>
+                                <td className="value">{item.rent ? formatCurrency(item.rent) : "-"}</td>
+                                <td className="value">
+                                  {item.beds ?? "-"} / {item.baths ?? "-"}
+                                </td>
+                                <td className="value">{item.sqft ?? "-"}</td>
+                                <td className="value">{item.yearBuilt ?? "-"}</td>
+                                <td className="value">{item.nicenessScore ?? "-"}</td>
+                                <td className="value">
+                                  {typeof item.distanceKm === "number" ? `${formatNumber(item.distanceKm, 1)} km` : "-"}
+                                </td>
+                                <td className="value">
+                                  <a href={item.url} target="_blank" rel="noreferrer">
+                                    listing {index + 1}
+                                  </a>
+                                  {item.title ? ` - ${item.title}` : ""}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p>No listing links were parsed from the Rentals.ca response body.</p>
+                    )}
+                  </div>
                 ) : null}
                 <p>
                   <button onClick={applyRentEstimate}>Apply estimate</button>
