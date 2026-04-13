@@ -357,17 +357,65 @@ function looksLikeCloudflareBlock(body: string): boolean {
   return hasTitle && hasChallengeCopy;
 }
 
-async function fetchRentalsCaHtmlWithPlaywright(targetUrl: string): Promise<{
+/** Set `RENTALS_DEBUG_LOG=false` to silence server logs (see terminal running `next dev`). */
+function logRentalsCaDebug(payload: Record<string, unknown>): void {
+  if (process.env.RENTALS_DEBUG_LOG === "false") {
+    return;
+  }
+  console.info("[rentals-ca-debug]", payload);
+}
+
+/** Headers that mimic a real browser; plain `fetch` with a bot UA is often rejected with HTTP 403. */
+function rentalsCaFetchHeaders(): Record<string, string> {
+  return {
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    Accept:
+      "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+    "Sec-Ch-Ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1"
+  };
+}
+
+async function fetchRentalsCaHtmlWithPlaywright(
+  targetUrl: string,
+  options?: { bypassEnvDisable?: boolean }
+): Promise<{
   html: string | null;
   error: string | null;
 }> {
-  const usePlaywright = process.env.RENTALS_USE_PLAYWRIGHT !== "false";
+  const usePlaywright =
+    options?.bypassEnvDisable === true || process.env.RENTALS_USE_PLAYWRIGHT !== "false";
   if (!usePlaywright) {
+    logRentalsCaDebug({
+      phase: "playwright:skipped",
+      targetUrl,
+      reason: "RENTALS_USE_PLAYWRIGHT=false",
+      bypassEnvDisable: options?.bypassEnvDisable ?? false
+    });
     return { html: null, error: null };
   }
 
+  const pwStarted = performance.now();
   try {
-    process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH ?? "0";
+    logRentalsCaDebug({
+      phase: "playwright:start",
+      targetUrl,
+      bypassEnvDisable: options?.bypassEnvDisable ?? false,
+      headless: process.env.PLAYWRIGHT_HEADLESS !== "false"
+    });
+    // Do not set PLAYWRIGHT_BROWSERS_PATH to "0" — that makes Playwright look under
+    // node_modules/playwright-core/.local-browsers/ instead of the OS cache
+    // (e.g. ~/Library/Caches/ms-playwright on macOS) where `npx playwright install` puts browsers.
     const playwright = await import("playwright");
     const browser = await playwright.chromium.launch({
       headless: process.env.PLAYWRIGHT_HEADLESS !== "false",
@@ -382,6 +430,14 @@ async function fetchRentalsCaHtmlWithPlaywright(targetUrl: string): Promise<{
       const page = await context.newPage();
       await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
       await page.waitForTimeout(4500);
+      const finalUrl = page.url();
+      const pageTitle = (await page.title()).replace(/\s+/gu, " ").trim().slice(0, 120);
+      logRentalsCaDebug({
+        phase: "playwright:after-goto",
+        ms: Math.round(performance.now() - pwStarted),
+        finalUrl,
+        pageTitle: pageTitle || "(empty)"
+      });
       const renderedHtml = await page.content();
       const textContent = await page.evaluate(() => document.body?.innerText ?? "");
       const comparableSnapshots = await page.evaluate(() => {
@@ -485,11 +541,27 @@ async function fetchRentalsCaHtmlWithPlaywright(targetUrl: string): Promise<{
       const serializedDetailSnapshots = JSON.stringify(detailSnapshots);
       const injected = `<script id="rea-playwright-comparables" type="application/json">${serializedSnapshots}</script>`;
       const injectedDetails = `<script id="rea-playwright-detail-comparables" type="application/json">${serializedDetailSnapshots}</script>`;
-      return { html: `${renderedHtml}\n${injected}\n${injectedDetails}\n${textContent}`, error: null };
+      const combinedHtml = `${renderedHtml}\n${injected}\n${injectedDetails}\n${textContent}`;
+      logRentalsCaDebug({
+        phase: "playwright:success",
+        ms: Math.round(performance.now() - pwStarted),
+        htmlChars: combinedHtml.length,
+        anchorRowCount: comparableSnapshots.length,
+        detailCandidateUrls: candidateUrls.length,
+        detailSnapshots: detailSnapshots.length,
+        bodyTextChars: textContent.length
+      });
+      return { html: combinedHtml, error: null };
     } finally {
       await browser.close();
     }
   } catch (error) {
+    logRentalsCaDebug({
+      phase: "playwright:error",
+      targetUrl,
+      ms: Math.round(performance.now() - pwStarted),
+      message: error instanceof Error ? error.message : String(error)
+    });
     return {
       html: null,
       error: error instanceof Error ? error.message : "Playwright failed"
@@ -769,51 +841,139 @@ function similarityScore(
 }
 
 export async function estimateRentFromRentalsCa(listing: ListingRecord): Promise<RentalsCaEstimate> {
+  const estimateStarted = performance.now();
   const searchUrl = buildRentalsCaSearchUrl(listing);
-  const playwrightResult = await fetchRentalsCaHtmlWithPlaywright(searchUrl);
+  logRentalsCaDebug({
+    phase: "estimate:start",
+    listingId: listing.id,
+    searchUrl,
+    rentalsUsePlaywright: process.env.RENTALS_USE_PLAYWRIGHT ?? "(unset)"
+  });
+  let playwrightResult = await fetchRentalsCaHtmlWithPlaywright(searchUrl);
   const playwrightHtml = playwrightResult.html;
   const htmlFromPlaywright = playwrightHtml && playwrightHtml.trim().length > 0 ? playwrightHtml : null;
+
+  logRentalsCaDebug({
+    phase: "estimate:after-first-playwright",
+    ms: Math.round(performance.now() - estimateStarted),
+    htmlLen: playwrightHtml?.length ?? 0,
+    playwrightError: playwrightResult.error
+  });
 
   let html = htmlFromPlaywright;
   let response: Response | undefined;
   let fetchMode: "playwright" | "http_fetch" = htmlFromPlaywright ? "playwright" : "http_fetch";
   if (!html) {
     try {
+      logRentalsCaDebug({ phase: "estimate:http-fetch:start", searchUrl });
       response = await fetch(searchUrl, {
-        headers: {
-          "user-agent": "Mozilla/5.0 (compatible; REA-Analyzer/1.0; +https://example.local)"
-        },
+        headers: rentalsCaFetchHeaders(),
         cache: "no-store"
       });
       html = await response.text();
+      const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/iu);
+      logRentalsCaDebug({
+        phase: "estimate:http-fetch:response",
+        ms: Math.round(performance.now() - estimateStarted),
+        status: response.status,
+        ok: response.ok,
+        bodyChars: html.length,
+        titleSnippet:
+          titleMatch?.[1]?.replace(/\s+/gu, " ").trim().slice(0, 100) ?? "(no title)"
+      });
       if (!response.ok) {
-        if (response.status === 403) {
-          const playwrightFailureNote = playwrightResult.error
-            ? ` Playwright error: ${playwrightResult.error}.`
-            : "";
+        if (looksLikeCloudflareBlock(html)) {
+          const pwAfterCf =
+            process.env.RENTALS_CLOUDFLARE_PLAYWRIGHT_RETRY === "false"
+              ? { html: null as string | null, error: null as string | null }
+              : await fetchRentalsCaHtmlWithPlaywright(searchUrl, {
+                  bypassEnvDisable: true
+                });
+          if (pwAfterCf.html?.trim()) {
+            html = pwAfterCf.html;
+            fetchMode = "playwright";
+            playwrightResult = pwAfterCf;
+            response = undefined;
+            logRentalsCaDebug({
+              phase: "estimate:recovered-after-cloudflare-fetch-via-playwright",
+              ms: Math.round(performance.now() - estimateStarted),
+              htmlChars: html.length
+            });
+          } else {
+            logRentalsCaDebug({
+              phase: "estimate:cloudflare-fetch-playwright-retry-failed",
+              firstPlaywrightError: playwrightResult.error,
+              retryError: pwAfterCf.error
+            });
+            const estimate = noMatchEstimate(
+              searchUrl,
+              listing,
+              "Rentals.ca returned HTTP 403 (Cloudflare / challenge page). Direct fetch cannot bypass this; Playwright retry also did not return HTML. Ensure RENTALS_USE_PLAYWRIGHT is not false, run: npx playwright install chromium, and check server logs [rentals-ca-debug]."
+            );
+            estimate.retrievalTrace.fetchMode = "http_fetch";
+            estimate.retrievalTrace.httpStatus = response.status;
+            estimate.retrievalTrace.isCloudflareBlock = true;
+            estimate.retrievalTrace.playwrightError = pwAfterCf.error ?? playwrightResult.error;
+            return estimate;
+          }
+        } else if (response.status === 403) {
+          const retryPlaywright =
+            process.env.RENTALS_USE_PLAYWRIGHT === "false"
+              ? await fetchRentalsCaHtmlWithPlaywright(searchUrl, { bypassEnvDisable: true })
+              : { html: null as string | null, error: null as string | null };
+          if (retryPlaywright.html?.trim()) {
+            html = retryPlaywright.html;
+            fetchMode = "playwright";
+            playwrightResult = retryPlaywright;
+            response = undefined;
+          } else {
+            const playwrightFailureNote = playwrightResult.error
+              ? ` Playwright error: ${playwrightResult.error}.`
+              : "";
+            const retryNote = retryPlaywright.error ? ` Playwright retry: ${retryPlaywright.error}.` : "";
+            const hint =
+              process.env.RENTALS_USE_PLAYWRIGHT === "false"
+                ? " Remove RENTALS_USE_PLAYWRIGHT=false from env, or ensure Playwright can run."
+                : " Ensure Chromium is installed: npx playwright install chromium";
+            const estimate = noMatchEstimate(
+              searchUrl,
+              listing,
+              `Rentals.ca blocked direct access (HTTP 403).${playwrightFailureNote}${retryNote} ${hint}`
+            );
+            estimate.retrievalTrace.httpStatus = 403;
+            estimate.retrievalTrace.playwrightError = retryPlaywright.error ?? playwrightResult.error;
+            return estimate;
+          }
+        } else {
           const estimate = noMatchEstimate(
             searchUrl,
             listing,
-            `Rentals.ca blocked direct access (HTTP 403). Playwright could not bypass challenge for this run.${playwrightFailureNote}`
+            `Rentals.ca fallback scrape returned HTTP ${response.status}.`
           );
-          estimate.retrievalTrace.httpStatus = 403;
+          estimate.retrievalTrace.httpStatus = response.status;
           estimate.retrievalTrace.playwrightError = playwrightResult.error;
           return estimate;
         }
-        const estimate = noMatchEstimate(
-          searchUrl,
-          listing,
-          `Rentals.ca fallback scrape returned HTTP ${response.status}.`
-        );
-        estimate.retrievalTrace.httpStatus = response.status;
-        estimate.retrievalTrace.playwrightError = playwrightResult.error;
-        return estimate;
       }
-    } catch {
+    } catch (err) {
+      logRentalsCaDebug({
+        phase: "estimate:http-fetch:throw",
+        message: err instanceof Error ? err.message : String(err)
+      });
       const estimate = noMatchEstimate(searchUrl, listing, "Rentals.ca fallback scrape request failed.");
       estimate.retrievalTrace.playwrightError = playwrightResult.error;
       return estimate;
     }
+  }
+
+  if (!html?.trim()) {
+    logRentalsCaDebug({
+      phase: "estimate:empty-html",
+      playwrightError: playwrightResult.error
+    });
+    const estimate = noMatchEstimate(searchUrl, listing, "Rentals.ca fallback returned empty HTML.");
+    estimate.retrievalTrace.playwrightError = playwrightResult.error;
+    return estimate;
   }
 
   if (looksLikeCloudflareBlock(html)) {

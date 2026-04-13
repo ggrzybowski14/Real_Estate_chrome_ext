@@ -9,6 +9,7 @@ import {
 } from "./rentals-ca-estimate";
 
 process.env.RENTALS_USE_PLAYWRIGHT = "false";
+process.env.RENTALS_CLOUDFLARE_PLAYWRIGHT_RETRY = "false";
 
 function sampleListing(overrides?: Partial<ListingRecord>): ListingRecord {
   return {
