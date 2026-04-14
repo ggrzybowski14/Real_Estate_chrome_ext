@@ -1,0 +1,28 @@
+---
+description: How to run the Realtor map Playwright CLI against real Chrome (CDP + dedicated profile)
+globs:
+  - apps/realtor-playwright-cli/**/*
+  - map-url.txt
+---
+
+# Realtor Playwright CLI — use real Chrome, not bundled Chromium
+
+Realtor.ca often returns **403** on `api2.realtor.ca` for Playwright-launched Chromium even when the **same map URL** works in a normal Chrome window. Do **not** assume the URL or `map-url.txt` is wrong.
+
+## Required approach for agents
+
+1. **Start Google Chrome** with a **dedicated user data directory** (isolates cookies/cookies consent from the user’s main profile) **and** remote debugging:
+
+   - From repo root: `npm run chrome:realtor-cdp`
+   - Or: `bash apps/realtor-playwright-cli/scripts/start-chrome-cdp.sh`
+   - Defaults: port **9222**, profile dir **`~/.rea-realtor-scraper-chrome`** (override with `REALTOR_CDP_PORT`, `REALTOR_CHROME_USER_DATA_DIR`).
+
+2. **Run the scraper** with CDP (second terminal):
+
+   `REALTOR_PW_CDP_ENDPOINT=http://127.0.0.1:9222 npm run scrape:realtor-map -- --url-file map-url.txt --dry-run`
+
+3. With `REALTOR_PW_CDP_ENDPOINT` set, the CLI **connects over CDP** and does **not** launch Playwright’s Chromium.
+
+4. Listing detail pages need **SPA hydration** — the CLI waits (`--listing-wait-ms`, default 45s) before `page.evaluate` scrape. Optional `REALTOR_PW_STEALTH=1` masks `navigator.webdriver` (minor).
+
+Details: `apps/realtor-playwright-cli/README.md` (CDP, listing detail empty payloads, Supabase without `--dry-run`).

@@ -4,11 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:web": "next dev",
     "build": "next build",
     "start": "next start",
     "benchmarks:refresh": "node ./scripts/refresh-benchmarks.mjs",
     "benchmarks:refresh:statcan": "tsx ./scripts/refresh-statcan.ts",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/lib/realtor-ca/*.test.ts src/lib/*.test.ts",
+    "realtor-dom-probe": "tsx scripts/run-realtor-dom-explore-probe.mts",
+    "scrape:realtor-map": "npm run start --prefix ../realtor-playwright-cli --"
   },
   "dependencies": {
     "@rea/analysis": "file:../../packages/analysis",

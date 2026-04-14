@@ -1,0 +1,23 @@
+{
+  "name": "@rea/realtor-playwright-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:browser": "node ./scripts/build-browser-bundle.mjs",
+    "prestart": "npm run build:browser",
+    "start": "tsx ./src/cli.ts",
+    "scrape": "npm run start --"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.8",
+    "dotenv": "^16.4.7",
+    "playwright": "^1.58.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.16",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.2"
+  }
+}

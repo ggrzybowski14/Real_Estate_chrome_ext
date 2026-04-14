@@ -41,6 +41,8 @@ export default function HomePage() {
       <div className="card">
         <Link href="/ingest">Open ingest page</Link>
         {" | "}
+        <Link href="/explore">Explore Realtor.ca listings</Link>
+        {" | "}
         <button onClick={loadListings}>Refresh listings</button>
       </div>
       {error ? <div className="card">{error}</div> : null}

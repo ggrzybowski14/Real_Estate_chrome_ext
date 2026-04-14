@@ -1,5 +1,6 @@
 import type { AssumptionSourceDetail, ListingRecord } from "@rea/shared";
 import { bedroomBucket, inferRegion, sqftBucket } from "./benchmark-resolver";
+import { logRealtorBrowser, resolvePlaywrightHeadless } from "./realtor-ca/realtor-browser-log";
 
 type RentalsComparable = {
   url: string;
@@ -407,20 +408,26 @@ async function fetchRentalsCaHtmlWithPlaywright(
 
   const pwStarted = performance.now();
   try {
+    const headless = resolvePlaywrightHeadless();
     logRentalsCaDebug({
       phase: "playwright:start",
       targetUrl,
       bypassEnvDisable: options?.bypassEnvDisable ?? false,
-      headless: process.env.PLAYWRIGHT_HEADLESS !== "false"
+      headless
+    });
+    logRealtorBrowser("rentalsCa:launchRequest", {
+      targetUrlSnippet: targetUrl.slice(0, 160),
+      waitUntil: "domcontentloaded"
     });
     // Do not set PLAYWRIGHT_BROWSERS_PATH to "0" — that makes Playwright look under
     // node_modules/playwright-core/.local-browsers/ instead of the OS cache
     // (e.g. ~/Library/Caches/ms-playwright on macOS) where `npx playwright install` puts browsers.
     const playwright = await import("playwright");
     const browser = await playwright.chromium.launch({
-      headless: process.env.PLAYWRIGHT_HEADLESS !== "false",
+      headless,
       args: ["--disable-blink-features=AutomationControlled"]
     });
+    logRealtorBrowser("rentalsCa:chromiumLaunched", { targetUrlSnippet: targetUrl.slice(0, 120) });
     try {
       const context = await browser.newContext({
         userAgent:
@@ -553,9 +560,13 @@ async function fetchRentalsCaHtmlWithPlaywright(
       });
       return { html: combinedHtml, error: null };
     } finally {
+      logRealtorBrowser("rentalsCa:browserClose", { targetUrlSnippet: targetUrl.slice(0, 120) });
       await browser.close();
     }
   } catch (error) {
+    logRealtorBrowser("rentalsCa:playwrightError", {
+      message: error instanceof Error ? error.message.slice(0, 220) : String(error).slice(0, 220)
+    });
     logRentalsCaDebug({
       phase: "playwright:error",
       targetUrl,
